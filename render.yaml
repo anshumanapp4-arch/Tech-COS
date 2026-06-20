@@ -1,11 +1,12 @@
 services:
   - type: web
     name: auraos-backend
-    env: docker
-    rootDir: backend
-    dockerfilePath: Dockerfile
-    dockerContext: .
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
     envVars:
+      - key: PYTHON_VERSION
+        value: 3.10.13
       - key: DATABASE_URL
         sync: false
       - key: FRONTEND_URL
