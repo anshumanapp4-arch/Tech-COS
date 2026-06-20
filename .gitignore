@@ -1,0 +1,42 @@
+# System files
+.DS_Store
+Thumbs.db
+
+# Frontend ignores
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+frontend/.env.local
+frontend/.env.development.local
+frontend/.env.test.local
+frontend/.env.production.local
+frontend/npm-debug.log*
+frontend/yarn-debug.log*
+frontend/yarn-error.log*
+frontend/.pnpm-debug.log*
+
+# Backend ignores
+backend/venv/
+backend/venv_old/
+backend/__pycache__/
+backend/*.py[cod]
+backend/*$py.class
+backend/*.db
+backend/uploads/
+backend/.env
+backend/chatbots.json
+backend/pip-log.txt
+backend/pip-delete-this-directory.txt
+backend/htmlcov/
+backend/.tox/
+backend/.nox/
+backend/.coverage
+backend/.coverage.*
+backend/.cache
+backend/nosetests.xml
+backend/coverage.xml
+backend/*.cover
+backend/*.py,cover
+backend/.hypothesis/
+backend/.pytest_cache/
+backend/cover/
