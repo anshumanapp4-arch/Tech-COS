@@ -14,6 +14,8 @@ import os
 frontend_url = os.getenv("FRONTEND_URL")
 allowed_origins = ["http://localhost:3000", "http://localhost:3001"]
 if frontend_url:
+    if not frontend_url.startswith("http"):
+        frontend_url = f"https://{frontend_url}"
     allowed_origins.append(frontend_url)
 
 # Setup CORS

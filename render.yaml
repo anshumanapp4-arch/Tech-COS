@@ -32,7 +32,7 @@ services:
         fromService:
           type: web
           name: auraos-frontend-anshuman
-          property: url
+          property: host
 
       # Secrets to be filled in manually via the Render Dashboard on first sync
       - key: PINECONE_API_KEY
@@ -63,4 +63,4 @@ services:
         fromService:
           type: web
           name: auraos-backend-anshuman
-          property: url
+          property: host
