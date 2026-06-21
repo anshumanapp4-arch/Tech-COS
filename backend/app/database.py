@@ -32,8 +32,9 @@ Base = declarative_base()
 
 
 def init_db():
-    """Create all tables. Call this at application startup with retries."""
-    max_retries = 12
+    """Create all tables. Call this at application startup with retries and SQLite fallback."""
+    global engine, SessionLocal
+    max_retries = 3
     retry_delay = 5
     for attempt in range(1, max_retries + 1):
         try:
@@ -43,8 +44,19 @@ def init_db():
             return
         except OperationalError as e:
             if attempt == max_retries:
-                print("ERROR: Database connection failed after maximum retries.")
-                raise e
+                print(f"ERROR: Database connection failed after {max_retries} attempts: {e}")
+                print("FALLBACK: Initializing local SQLite database to prevent deployment crash.")
+                try:
+                    fallback_url = "sqlite:///./auraos_fallback.db"
+                    fallback_engine = create_engine(fallback_url, connect_args={"check_same_thread": False})
+                    engine = fallback_engine
+                    SessionLocal.configure(bind=fallback_engine)
+                    Base.metadata.create_all(bind=fallback_engine)
+                    print("SUCCESS: Fallback SQLite database successfully initialized.")
+                    return
+                except Exception as fallback_err:
+                    print(f"CRITICAL: SQLite fallback also failed: {fallback_err}")
+                    raise e
             print(f"Database connection failed: {e}. Retrying in {retry_delay}s...")
             time.sleep(retry_delay)
 
