@@ -21,8 +21,13 @@ PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
 PINECONE_INDEX_NAME = os.getenv("PINECONE_INDEX_NAME", "auraos")
 
 if PINECONE_API_KEY:
-    pc = Pinecone(api_key=PINECONE_API_KEY)
-    pinecone_index = pc.Index(PINECONE_INDEX_NAME)
+    try:
+        pc = Pinecone(api_key=PINECONE_API_KEY)
+        pinecone_index = pc.Index(PINECONE_INDEX_NAME)
+    except Exception as e:
+        print(f"WARNING: Could not connect to Pinecone index '{PINECONE_INDEX_NAME}': {e}")
+        print("Please ensure you have created a Pinecone index with 768 dimensions (for gemini-embedding-2) and cosine metric.")
+        pinecone_index = None
 else:
     pinecone_index = None
 
