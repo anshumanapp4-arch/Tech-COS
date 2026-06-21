@@ -4,7 +4,7 @@
 # (e.g., to 'auraos-backend-yourname' and 'auraos-frontend-yourname') to get a unique URL.
 
 databases:
-  - name: auraos-db
+  - name: auraos-db-anshuman
     plan: free
     region: oregon
     databaseName: auraos
@@ -15,7 +15,7 @@ services:
   # 1. Dockerized FastAPI Backend
   # ---------------------------------------------------------------------------
   - type: web
-    name: auraos-backend
+    name: auraos-backend-anshuman
     runtime: docker
     plan: free
     region: oregon
@@ -24,15 +24,15 @@ services:
       # Automatically injected database connection from the auraos-db above
       - key: DATABASE_URL
         fromDatabase:
-          name: auraos-db
+          name: auraos-db-anshuman
           property: connectionString
 
       # Automatically injected frontend URL for CORS middleware
       - key: FRONTEND_URL
         fromService:
           type: web
-          name: auraos-frontend
-          property: host
+          name: auraos-frontend-anshuman
+          property: url
 
       # Secrets to be filled in manually via the Render Dashboard on first sync
       - key: PINECONE_API_KEY
@@ -50,7 +50,7 @@ services:
   # 2. Next.js Frontend
   # ---------------------------------------------------------------------------
   - type: web
-    name: auraos-frontend
+    name: auraos-frontend-anshuman
     runtime: node
     plan: free
     region: oregon
@@ -62,5 +62,5 @@ services:
       - key: NEXT_PUBLIC_API_URL
         fromService:
           type: web
-          name: auraos-backend
-          property: host
+          name: auraos-backend-anshuman
+          property: url
