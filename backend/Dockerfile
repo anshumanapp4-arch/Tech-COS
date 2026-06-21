@@ -1,4 +1,4 @@
-FROM python:3.10-slim
+FROM mcr.microsoft.com/playwright/python:v1.42.0-jammy
 
 # Set environment variables
 ENV PYTHONDONTWRITEBYTECODE=1

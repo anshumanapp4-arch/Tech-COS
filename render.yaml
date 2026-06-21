@@ -1,23 +1,63 @@
+# AuraOS Render Blueprint Specification
+# Use this blueprint to deploy the complete stack (Database, Backend, Frontend) with one click.
+# NOTE: If you get a subdomain conflict error during sync, change the 'name' of the services below
+# (e.g., to 'auraos-backend-yourname' and 'auraos-frontend-yourname') to get a unique URL.
+
+databases:
+  - name: auraos-db
+    plan: free
+    databaseName: auraos
+    user: auraos_user
+
 services:
+  # ---------------------------------------------------------------------------
+  # 1. Dockerized FastAPI Backend
+  # ---------------------------------------------------------------------------
   - type: web
     name: auraos-backend
-    env: python
+    runtime: docker
     plan: free
     rootDir: backend
-    buildCommand: pip install -r requirements.txt
-    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
     envVars:
-      - key: PYTHON_VERSION
-        value: 3.10.13
+      # Automatically injected database connection from the auraos-db above
       - key: DATABASE_URL
-        sync: false
+        fromDatabase:
+          name: auraos-db
+          property: connectionString
+
+      # Automatically injected frontend URL for CORS middleware
       - key: FRONTEND_URL
-        sync: false
+        fromService:
+          type: web
+          name: auraos-frontend
+          property: host
+
+      # Secrets to be filled in manually via the Render Dashboard on first sync
       - key: PINECONE_API_KEY
         sync: false
       - key: GEMINI_API_KEY
         sync: false
       - key: SARVAM_API_KEY
         sync: false
+
+      # Automatically generated secure token secret
       - key: JWT_SECRET
-        sync: false
+        generateValue: true
+
+  # ---------------------------------------------------------------------------
+  # 2. Next.js Frontend
+  # ---------------------------------------------------------------------------
+  - type: web
+    name: auraos-frontend
+    runtime: node
+    plan: free
+    rootDir: frontend
+    buildCommand: npm install && npm run build
+    startCommand: npm run start
+    envVars:
+      # Automatically injected backend URL for client-side API requests
+      - key: NEXT_PUBLIC_API_URL
+        fromService:
+          type: web
+          name: auraos-backend
+          property: host
