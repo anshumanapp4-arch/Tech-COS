@@ -5,8 +5,10 @@ changing the DATABASE_URL environment variable.
 """
 
 import os
+import time
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, declarative_base
+from sqlalchemy.exc import OperationalError
 
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./auraos.db")
 if DATABASE_URL.startswith("postgres://"):
@@ -30,5 +32,19 @@ Base = declarative_base()
 
 
 def init_db():
-    """Create all tables. Call this at application startup."""
-    Base.metadata.create_all(bind=engine)
+    """Create all tables. Call this at application startup with retries."""
+    max_retries = 12
+    retry_delay = 5
+    for attempt in range(1, max_retries + 1):
+        try:
+            print(f"Connecting to database (attempt {attempt}/{max_retries})...")
+            Base.metadata.create_all(bind=engine)
+            print("SUCCESS: Database connection established and tables initialized.")
+            return
+        except OperationalError as e:
+            if attempt == max_retries:
+                print("ERROR: Database connection failed after maximum retries.")
+                raise e
+            print(f"Database connection failed: {e}. Retrying in {retry_delay}s...")
+            time.sleep(retry_delay)
+

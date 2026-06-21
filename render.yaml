@@ -6,6 +6,7 @@
 databases:
   - name: auraos-db
     plan: free
+    region: oregon
     databaseName: auraos
     user: auraos_user
 
@@ -17,6 +18,7 @@ services:
     name: auraos-backend
     runtime: docker
     plan: free
+    region: oregon
     rootDir: backend
     envVars:
       # Automatically injected database connection from the auraos-db above
@@ -51,6 +53,7 @@ services:
     name: auraos-frontend
     runtime: node
     plan: free
+    region: oregon
     rootDir: frontend
     buildCommand: npm install && npm run build
     startCommand: npm run start
