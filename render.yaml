@@ -3,13 +3,6 @@
 # NOTE: If you get a subdomain conflict error during sync, change the 'name' of the services below
 # (e.g., to 'auraos-backend-yourname' and 'auraos-frontend-yourname') to get a unique URL.
 
-databases:
-  - name: auraos-db
-    plan: free
-    region: oregon
-    databaseName: auraos
-    user: auraos_user
-
 services:
   # ---------------------------------------------------------------------------
   # 1. Dockerized FastAPI Backend
@@ -21,11 +14,9 @@ services:
     region: oregon
     rootDir: backend
     envVars:
-      # Automatically injected database connection from the auraos-db above
+      # Will fall back to SQLite if not provided manually in Render Dashboard
       - key: DATABASE_URL
-        fromDatabase:
-          name: auraos-db
-          property: connectionString
+        sync: false
 
       # Automatically injected frontend URL for CORS middleware
       - key: FRONTEND_URL
