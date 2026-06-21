@@ -42,7 +42,7 @@ def init_db():
             Base.metadata.create_all(bind=engine)
             print("SUCCESS: Database connection established and tables initialized.")
             return
-        except OperationalError as e:
+        except Exception as e:
             if attempt == max_retries:
                 print(f"ERROR: Database connection failed after {max_retries} attempts: {e}")
                 print("FALLBACK: Initializing local SQLite database to prevent deployment crash.")

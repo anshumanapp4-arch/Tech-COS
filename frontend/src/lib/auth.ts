@@ -3,7 +3,10 @@
  * Stores JWT in localStorage and provides helpers for all auth operations.
  */
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+let API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+if (API_BASE && !API_BASE.startsWith("http")) {
+  API_BASE = `https://${API_BASE}`;
+}
 
 export interface User {
   id: string;
