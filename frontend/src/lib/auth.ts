@@ -3,7 +3,14 @@
  * Stores JWT in localStorage and provides helpers for all auth operations.
  */
 
-let API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+let API_BASE = process.env.NEXT_PUBLIC_API_URL || "";
+if (!API_BASE) {
+  if (typeof window !== "undefined" && !window.location.hostname.includes("localhost")) {
+    API_BASE = "https://auraos-backend-anshuman.onrender.com";
+  } else {
+    API_BASE = "http://localhost:8000";
+  }
+}
 if (API_BASE && !API_BASE.startsWith("http")) {
   API_BASE = `https://${API_BASE}`;
 }
