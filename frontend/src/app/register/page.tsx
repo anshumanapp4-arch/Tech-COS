@@ -4,10 +4,12 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { register } from "@/lib/auth";
+import { useAuth } from "@/context/AuthContext";
 import { UserPlus, Eye, EyeOff, Sparkles, ArrowRight, Building2 } from "lucide-react";
 
 export default function RegisterPage() {
   const router = useRouter();
+  const { refreshUser } = useAuth();
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -22,7 +24,8 @@ export default function RegisterPage() {
     setLoading(true);
 
     try {
-      await register(name, email, password, orgName);
+      const data = await register(name, email, password, orgName);
+      await refreshUser(data.user);
       router.push("/");
     } catch (err: any) {
       setError(err.message || "Registration failed.");

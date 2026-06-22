@@ -4,10 +4,12 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { login } from "@/lib/auth";
+import { useAuth } from "@/context/AuthContext";
 import { LogIn, Eye, EyeOff, Sparkles, ArrowRight } from "lucide-react";
 
 export default function LoginPage() {
   const router = useRouter();
+  const { refreshUser } = useAuth();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
@@ -20,7 +22,8 @@ export default function LoginPage() {
     setLoading(true);
 
     try {
-      await login(email, password);
+      const data = await login(email, password);
+      await refreshUser(data.user);
       router.push("/");
     } catch (err: any) {
       setError(err.message || "Login failed.");

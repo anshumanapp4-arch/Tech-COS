@@ -2,9 +2,8 @@
 
 import { LayoutDashboard, MessageSquare, Mic, Globe, Settings, LogOut, CreditCard, Building2 } from "lucide-react";
 import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname } from "next/navigation";
 import { useAuth } from "@/context/AuthContext";
-import { useEffect } from "react";
 
 const navItems = [
   { name: "Dashboard", href: "/", icon: LayoutDashboard },
@@ -17,16 +16,9 @@ const navItems = [
 
 export default function Sidebar() {
   const pathname = usePathname();
-  const router = useRouter();
-  const { user, isAuthenticated, loading, logout } = useAuth();
+  const { user, logout } = useAuth();
 
-  useEffect(() => {
-    if (!loading && !isAuthenticated) {
-      router.push("/login");
-    }
-  }, [loading, isAuthenticated, router]);
-
-  if (loading || !isAuthenticated) return null;
+  if (!user) return null;
 
   return (
     <div className="w-72 h-screen glass-panel rounded-none border-t-0 border-l-0 border-b-0 flex flex-col z-20">

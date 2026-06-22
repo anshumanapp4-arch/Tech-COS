@@ -20,7 +20,7 @@ interface AuthContextType {
   user: User | null;
   loading: boolean;
   isAuthenticated: boolean;
-  refreshUser: () => Promise<void>;
+  refreshUser: (preFetchedUser?: User | null) => Promise<void>;
   logout: () => void;
 }
 
@@ -36,7 +36,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
 
-  const refreshUser = useCallback(async () => {
+  const refreshUser = useCallback(async (preFetchedUser?: User | null) => {
+    if (preFetchedUser !== undefined) {
+      setUser(preFetchedUser);
+      setLoading(false);
+      return;
+    }
     const token = getToken();
     if (!token) {
       setUser(null);
