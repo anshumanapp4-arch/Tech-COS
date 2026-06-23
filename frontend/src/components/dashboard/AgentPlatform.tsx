@@ -18,8 +18,8 @@ type Agent = {
 
 export default function AgentPlatform() {
   const [view, setView] = useState<"list" | "create" | "integration">("list");
-  const [agents, setAgents] = useState<Agent[]>([]);
-  const [selectedAgent, setSelectedAgent] = useState<Agent | null>(null);
+  const [agents, setAgents] = useState<any[]>([]);
+  const [selectedAgent, setSelectedAgent] = useState<any | null>(null);
   
   // Create Form State
   const [name, setName] = useState("");
@@ -32,7 +32,29 @@ export default function AgentPlatform() {
   const [enableEscalation, setEnableEscalation] = useState(false);
   const [availableFiles, setAvailableFiles] = useState<any[]>([]);
 
+  // Mini Uploader State
+  const [miniUploadStatus, setMiniUploadStatus] = useState<"idle" | "uploading" | "processing" | "done" | "error">("idle");
+  const [miniUploadError, setMiniUploadError] = useState("");
+
+  // Integration States
+  const [activeTab, setActiveTab] = useState<"widget" | "telegram" | "whatsapp">("widget");
+  const [whatsappEnabled, setWhatsappEnabled] = useState(false);
+  const [whatsappToken, setWhatsappToken] = useState("");
+  const [whatsappPhoneNumberId, setWhatsappPhoneNumberId] = useState("");
+  const [telegramEnabled, setTelegramEnabled] = useState(false);
+  const [telegramToken, setTelegramToken] = useState("");
+
   const [copied, setCopied] = useState(false);
+
+  useEffect(() => {
+    if (selectedAgent) {
+      setWhatsappEnabled(selectedAgent.whatsapp_enabled || false);
+      setWhatsappToken(selectedAgent.whatsapp_token || "");
+      setWhatsappPhoneNumberId(selectedAgent.whatsapp_phone_number_id || "");
+      setTelegramEnabled(selectedAgent.telegram_enabled || false);
+      setTelegramToken(selectedAgent.telegram_token || "");
+    }
+  }, [selectedAgent]);
 
   useEffect(() => {
     fetchAgents();
@@ -67,6 +89,124 @@ export default function AgentPlatform() {
       }
     } catch (e) {
       console.error("Cannot reach backend for files:", e);
+    }
+  };
+
+  const handleMiniUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!e.target.files || !e.target.files[0]) return;
+    const file = e.target.files[0];
+    setMiniUploadStatus("uploading");
+    setMiniUploadError("");
+
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+      formData.append("language", "original"); // Default to original translation
+
+      const res = await authFetch("/api/upload/", {
+        method: "POST",
+        body: formData,
+      });
+
+      if (!res.ok) {
+        setMiniUploadStatus("error");
+        setMiniUploadError("Upload failed. Verify backend services.");
+        return;
+      }
+
+      const data = await res.json();
+      if (!data.file_id) {
+        setMiniUploadStatus("error");
+        setMiniUploadError("Missing file ID.");
+        return;
+      }
+
+      setMiniUploadStatus("processing");
+      
+      // Poll transcription status
+      let attempts = 0;
+      const interval = setInterval(async () => {
+        attempts++;
+        if (attempts > 30) {
+          clearInterval(interval);
+          setMiniUploadStatus("error");
+          setMiniUploadError("Ingestion timed out.");
+          return;
+        }
+
+        try {
+          const transRes = await authFetch(`/api/upload/${data.file_id}/transcription`);
+          if (transRes.ok) {
+            const transData = await transRes.json();
+            if (transData.error) {
+              clearInterval(interval);
+              setMiniUploadStatus("error");
+              setMiniUploadError(transData.error);
+            } else if (transData.transcription) {
+              clearInterval(interval);
+              setMiniUploadStatus("done");
+              
+              // Refresh file list and select the newly uploaded file
+              await fetchFiles();
+              setFileId(data.file_id);
+            }
+          }
+        } catch {
+          // Ignore network errors during polling
+        }
+      }, 2000);
+
+    } catch (err) {
+      setMiniUploadStatus("error");
+      setMiniUploadError("Server unreachable.");
+    }
+  };
+
+  const handleSaveIntegrations = async () => {
+    if (!selectedAgent) return;
+    try {
+      const res = await authFetch(`/api/chatbots/${selectedAgent.bot_id}/integrations`, {
+        method: "PUT",
+        body: JSON.stringify({
+          whatsapp_enabled: whatsappEnabled,
+          whatsapp_token: whatsappToken,
+          whatsapp_phone_number_id: whatsappPhoneNumberId,
+          telegram_enabled: telegramEnabled,
+          telegram_token: telegramToken,
+        })
+      });
+
+      if (!res.ok) {
+        alert("❌ Failed to save integration settings.");
+        return;
+      }
+
+      const updated = await res.json();
+      setSelectedAgent(updated);
+      alert("✅ Integration settings saved successfully.");
+    } catch (e) {
+      console.error(e);
+      alert("❌ Error connecting to backend.");
+    }
+  };
+
+  const handleSetupTelegramWebhook = async () => {
+    if (!selectedAgent) return;
+    try {
+      const res = await authFetch(`/api/chatbots/${selectedAgent.bot_id}/setup-telegram-webhook`, {
+        method: "POST"
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        alert(`❌ Error setting Telegram webhook: ${data.detail || "Unknown error"}`);
+        return;
+      }
+
+      alert("✅ Telegram webhook registered successfully!");
+    } catch (e) {
+      console.error(e);
+      alert("❌ Error connecting to backend.");
     }
   };
 
@@ -264,14 +404,40 @@ export default function AgentPlatform() {
               </h3>
               
               <label className="block text-xs font-bold text-slate-400 uppercase tracking-widest mb-2">Data Source Binding</label>
-              <select 
-                value={fileId} onChange={e => setFileId(e.target.value)}
-                className="w-full bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-purple-500 focus:ring-1 focus:ring-purple-500/50 transition-all font-medium mb-6 appearance-none"
-                style={{ backgroundImage: "url(\"data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3e%3cpath stroke='%236b7280' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M6 8l4 4 4-4'/%3e%3c/svg%3e\")", backgroundPosition: "right 0.5rem center", backgroundRepeat: "no-repeat", backgroundSize: "1.5em 1.5em" }}
-              >
-                {availableFiles.length === 0 && <option value="">NO DATA SOURCES DETECTED</option>}
-                {availableFiles.map(f => <option key={f.file_id} value={f.file_id}>{f.filename}</option>)}
-              </select>
+              <div className="flex gap-3 mb-4">
+                <select 
+                  value={fileId} onChange={e => setFileId(e.target.value)}
+                  className="flex-1 bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-purple-500 focus:ring-1 focus:ring-purple-500/50 transition-all font-medium appearance-none"
+                  style={{ backgroundImage: "url(\"data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3e%3cpath stroke='%236b7280' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M6 8l4 4 4-4'/%3e%3c/svg%3e\")", backgroundPosition: "right 0.5rem center", backgroundRepeat: "no-repeat", backgroundSize: "1.5em 1.5em" }}
+                >
+                  {availableFiles.length === 0 && <option value="">NO DATA SOURCES DETECTED</option>}
+                  {availableFiles.map(f => <option key={f.file_id} value={f.file_id}>{f.filename}</option>)}
+                </select>
+                
+                <label className="cursor-pointer bg-purple-500/10 hover:bg-purple-500/20 border border-purple-500/30 text-purple-300 font-bold px-4 py-3 rounded-xl flex items-center gap-2 transition-colors shrink-0 text-sm">
+                  <span>Upload Knowledge</span>
+                  <input 
+                    type="file" 
+                    className="hidden" 
+                    onChange={handleMiniUpload} 
+                    accept="audio/*,video/*,.pdf,.docx,.txt,.csv" 
+                  />
+                </label>
+              </div>
+
+              {/* In-place Upload Status */}
+              {miniUploadStatus === "uploading" && (
+                <p className="text-xs text-blue-400 font-semibold mb-4 animate-pulse">Uploading file to chatbot knowledge vault...</p>
+              )}
+              {miniUploadStatus === "processing" && (
+                <p className="text-xs text-purple-400 font-semibold mb-4 animate-pulse">Processing & indexing document context...</p>
+              )}
+              {miniUploadStatus === "done" && (
+                <p className="text-xs text-emerald-400 font-semibold mb-4">✅ Knowledge ingested and bound successfully!</p>
+              )}
+              {miniUploadStatus === "error" && (
+                <p className="text-xs text-red-400 font-semibold mb-4">❌ {miniUploadError || "Failed to process file."}</p>
+              )}
 
               <label className="block text-xs font-bold text-slate-400 uppercase tracking-widest mb-2">Behavioral Guardrails</label>
               <textarea 
@@ -358,12 +524,24 @@ export default function AgentPlatform() {
   }
 
   if (view === "integration" && selectedAgent) {
-    const curlCommand = `curl -X POST https://auraos.api/v1/chat \\
+    const backendHost = typeof window !== 'undefined' 
+      ? window.location.origin.replace("3000", "8000").replace("3001", "8000") 
+      : "https://auraos-backend-anshuman.onrender.com";
+
+    const curlCommand = `curl -X POST ${backendHost}/api/chat/ \\
   -H "Content-Type: application/json" \\
   -d '{
-    "messages": [{"role": "user", "content": "Query initialization."}],
+    "messages": [{"role": "user", "content": "Hello"}],
     "api_key": "${selectedAgent.api_key}"
   }'`;
+
+    const widgetScript = `<script>
+  window.AuraOS = {
+    botId: "${selectedAgent.bot_id}",
+    host: "${backendHost}"
+  };
+</script>
+<script src="${backendHost}/static/widget.js" async></script>`;
 
     return (
       <div className="max-w-4xl mx-auto text-slate-100 pb-20 animate-in zoom-in-95 duration-500">
@@ -382,77 +560,237 @@ export default function AgentPlatform() {
           <div className="absolute top-0 right-0 w-[500px] h-[500px] bg-cyan-500/10 blur-[100px] rounded-full -translate-y-1/2 translate-x-1/3 pointer-events-none" />
           <div className="absolute bottom-0 left-0 w-[300px] h-[300px] bg-blue-500/10 blur-[80px] rounded-full translate-y-1/3 -translate-x-1/3 pointer-events-none" />
           
-          <div className="relative z-10 text-center mb-12">
-            <div className="inline-flex items-center justify-center w-20 h-20 rounded-2xl bg-gradient-to-br from-emerald-500/20 to-cyan-500/20 border border-emerald-500/30 mb-6 shadow-[0_0_30px_rgba(16,185,129,0.2)]">
-              <CheckCircle2 className="w-10 h-10 text-emerald-400" />
+          <div className="relative z-10 text-center mb-8">
+            <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-gradient-to-br from-emerald-500/20 to-cyan-500/20 border border-emerald-500/30 mb-4 shadow-[0_0_30px_rgba(16,185,129,0.2)]">
+              <CheckCircle2 className="w-8 h-8 text-emerald-400" />
             </div>
-            <h1 className="text-4xl font-black text-white tracking-tight mb-4">Entity Deployed: {selectedAgent.name}</h1>
-            <p className="text-lg text-slate-400 max-w-xl mx-auto">
-              Your agent is now active and isolated to its data source. Use the credentials below to interface with it externally.
+            <h1 className="text-3xl font-black text-white tracking-tight mb-2">Entity Active: {selectedAgent.name}</h1>
+            <p className="text-sm text-slate-400 max-w-xl mx-auto">
+              Configure endpoints and channel hooks to connect this AI bot to your platforms.
             </p>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-            <div className="bg-black/50 border border-white/5 rounded-2xl p-5 backdrop-blur-sm">
-              <p className="text-xs text-slate-500 uppercase tracking-widest font-bold mb-1">Status</p>
-              <p className="text-emerald-400 font-bold flex items-center gap-2">
-                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" /> Online
-              </p>
-            </div>
-            <div className="bg-black/50 border border-white/5 rounded-2xl p-5 backdrop-blur-sm">
-              <p className="text-xs text-slate-500 uppercase tracking-widest font-bold mb-1">Data Source</p>
-              <p className="text-white font-medium font-mono text-sm truncate">{selectedAgent.file_id}</p>
-            </div>
-            <div className="bg-black/50 border border-amber-500/20 rounded-2xl p-5 backdrop-blur-sm relative overflow-hidden group">
-              <div className="absolute inset-0 bg-amber-500/5 group-hover:bg-amber-500/10 transition-colors" />
-              <p className="text-xs text-amber-500/70 uppercase tracking-widest font-bold mb-1 relative z-10">Secret API Key</p>
-              <div className="flex items-center justify-between relative z-10">
-                <p className="text-amber-400 font-bold font-mono text-sm truncate pr-4">{selectedAgent.api_key}</p>
-                <button onClick={() => copySnippet(selectedAgent.api_key)} className="text-amber-400/50 hover:text-amber-400 shrink-0">
-                  <Copy className="w-4 h-4" />
-                </button>
-              </div>
-            </div>
-            
-            <div className="bg-black/50 border border-white/5 rounded-2xl p-5 backdrop-blur-sm relative overflow-hidden group col-span-1 md:col-span-3">
-              <div className="flex items-center justify-between relative z-10">
-                <div>
-                  <p className="text-xs text-slate-500 uppercase tracking-widest font-bold mb-1">Live Testing</p>
-                  <p className="text-white font-medium text-sm">Interface directly with this entity now.</p>
-                </div>
-                <button 
-                  onClick={() => {
-                    localStorage.setItem("chatbot_config", JSON.stringify({ selectedFileId: selectedAgent.bot_id }));
-                    window.dispatchEvent(new Event('chatbot_config_updated'));
-                    window.dispatchEvent(new Event('open_chatbot'));
-                  }}
-                  className="bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold px-6 py-2.5 rounded-xl shadow-[0_0_15px_rgba(16,185,129,0.3)] transition-all"
-                >
-                  Launch Interface
-                </button>
-              </div>
-            </div>
+          {/* Integration Tabs */}
+          <div className="flex gap-2 mb-8 border-b border-white/10 pb-4 relative z-10">
+            <button 
+              onClick={() => setActiveTab("widget")} 
+              className={`px-5 py-2.5 text-xs font-bold uppercase tracking-wider rounded-xl transition-all ${
+                activeTab === "widget" ? "bg-cyan-500/20 text-cyan-400 border border-cyan-500/30 shadow-[0_0_15px_rgba(6,182,212,0.15)]" : "text-slate-400 hover:text-white"
+              }`}
+            >
+              Web Widget
+            </button>
+            <button 
+              onClick={() => setActiveTab("telegram")} 
+              className={`px-5 py-2.5 text-xs font-bold uppercase tracking-wider rounded-xl transition-all ${
+                activeTab === "telegram" ? "bg-cyan-500/20 text-cyan-400 border border-cyan-500/30 shadow-[0_0_15px_rgba(6,182,212,0.15)]" : "text-slate-400 hover:text-white"
+              }`}
+            >
+              Telegram Bot
+            </button>
+            <button 
+              onClick={() => setActiveTab("whatsapp")} 
+              className={`px-5 py-2.5 text-xs font-bold uppercase tracking-wider rounded-xl transition-all ${
+                activeTab === "whatsapp" ? "bg-cyan-500/20 text-cyan-400 border border-cyan-500/30 shadow-[0_0_15px_rgba(6,182,212,0.15)]" : "text-slate-400 hover:text-white"
+              }`}
+            >
+              WhatsApp Bot
+            </button>
           </div>
 
-          <div className="bg-black border border-cyan-500/20 rounded-2xl overflow-hidden relative shadow-2xl">
-            <div className="bg-[#0a0f1c] px-6 py-4 border-b border-cyan-500/20 flex justify-between items-center">
-              <div className="flex items-center gap-3">
-                <Terminal className="w-5 h-5 text-cyan-400" />
-                <span className="text-sm font-bold text-white uppercase tracking-widest">External Interfacing (REST)</span>
+          <div className="relative z-10 space-y-6">
+            {activeTab === "widget" && (
+              <>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                  <div className="bg-black/50 border border-white/5 rounded-2xl p-5 backdrop-blur-sm">
+                    <p className="text-xs text-slate-500 uppercase tracking-widest font-bold mb-1">Status</p>
+                    <p className="text-emerald-400 font-bold flex items-center gap-2 text-sm">
+                      <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" /> Online
+                    </p>
+                  </div>
+                  <div className="bg-black/50 border border-white/5 rounded-2xl p-5 backdrop-blur-sm">
+                    <p className="text-xs text-slate-500 uppercase tracking-widest font-bold mb-1">Assimilated Source</p>
+                    <p className="text-white font-medium font-mono text-xs truncate">{selectedAgent.file_id}</p>
+                  </div>
+                  <div className="bg-black/50 border border-amber-500/20 rounded-2xl p-5 backdrop-blur-sm relative overflow-hidden group">
+                    <div className="absolute inset-0 bg-amber-500/5 group-hover:bg-amber-500/10 transition-colors" />
+                    <p className="text-xs text-amber-500/70 uppercase tracking-widest font-bold mb-1 relative z-10">Secret API Key</p>
+                    <div className="flex items-center justify-between relative z-10">
+                      <p className="text-amber-400 font-bold font-mono text-xs truncate pr-4">{selectedAgent.api_key || "sk_live_..."}</p>
+                      <button onClick={() => copySnippet(selectedAgent.api_key)} className="text-amber-400/50 hover:text-amber-400 shrink-0">
+                        <Copy className="w-4 h-4" />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="bg-black border border-cyan-500/20 rounded-2xl overflow-hidden relative shadow-2xl">
+                  <div className="bg-[#0a0f1c] px-6 py-4 border-b border-cyan-500/20 flex justify-between items-center">
+                    <div className="flex items-center gap-3">
+                      <Terminal className="w-5 h-5 text-cyan-400" />
+                      <span className="text-sm font-bold text-white uppercase tracking-widest">REST API Integration Payload</span>
+                    </div>
+                    <button 
+                      onClick={() => copySnippet(curlCommand)}
+                      className="text-xs font-bold uppercase tracking-widest flex items-center gap-2 text-cyan-500 hover:text-cyan-300 bg-cyan-500/10 hover:bg-cyan-500/20 px-3 py-1.5 rounded-lg transition-all"
+                    >
+                      {copied ? <Check className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
+                      {copied ? "Copied" : "Copy Payload"}
+                    </button>
+                  </div>
+                  <div className="p-6 overflow-x-auto bg-[#02040a]">
+                    <pre className="text-xs font-mono text-cyan-300/80 leading-relaxed">
+                      <code>{curlCommand}</code>
+                    </pre>
+                  </div>
+                </div>
+
+                <div className="bg-black border border-white/10 rounded-2xl overflow-hidden relative">
+                  <div className="bg-[#0a0f1c] px-6 py-4 border-b border-white/5 flex justify-between items-center">
+                    <span className="text-sm font-bold text-white uppercase tracking-widest">HTML Embedded Script</span>
+                    <button 
+                      onClick={() => copySnippet(widgetScript)}
+                      className="text-xs font-bold uppercase tracking-widest flex items-center gap-2 text-cyan-500 hover:text-cyan-300 bg-cyan-500/10 hover:bg-cyan-500/20 px-3 py-1.5 rounded-lg transition-all"
+                    >
+                      {copied ? <Check className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
+                      {copied ? "Copied" : "Copy HTML"}
+                    </button>
+                  </div>
+                  <div className="p-6 overflow-x-auto bg-[#02040a]">
+                    <pre className="text-xs font-mono text-white/70 leading-relaxed">
+                      <code>{widgetScript}</code>
+                    </pre>
+                  </div>
+                </div>
+              </>
+            )}
+
+            {activeTab === "telegram" && (
+              <div className="bg-[#0a0f1c] border border-cyan-500/20 rounded-2xl p-6 space-y-6">
+                <div className="flex items-center justify-between p-4 bg-black/40 border border-white/5 rounded-xl">
+                  <div>
+                    <h4 className="text-sm font-bold text-white">Enable Telegram Integration</h4>
+                    <p className="text-xs text-slate-400 mt-1">Direct inquiries on Telegram to your AI chatbot.</p>
+                  </div>
+                  <button 
+                    onClick={() => setTelegramEnabled(!telegramEnabled)}
+                    className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${telegramEnabled ? 'bg-emerald-500' : 'bg-slate-700'}`}
+                  >
+                    <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${telegramEnabled ? 'translate-x-6' : 'translate-x-1'}`} />
+                  </button>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="block text-xs font-bold text-slate-400 uppercase tracking-widest">Telegram Bot Token</label>
+                  <input 
+                    type="text" 
+                    value={telegramToken}
+                    onChange={e => setTelegramToken(e.target.value)}
+                    placeholder="Enter Bot Token (e.g., 123456789:ABCdefGhIJKlmNoPQRsTuvwXyz)"
+                    className="w-full bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-cyan-500 transition-all font-mono text-sm"
+                  />
+                  <p className="text-[10px] text-slate-500">
+                    Generate this token by messaging <a href="https://t.me/BotFather" target="_blank" rel="noreferrer" className="text-cyan-400 hover:underline">@BotFather</a> on Telegram.
+                  </p>
+                </div>
+
+                {telegramEnabled && telegramToken && (
+                  <div className="p-4 bg-blue-500/5 border border-blue-500/10 rounded-xl space-y-2">
+                    <p className="text-xs font-bold text-blue-400 uppercase tracking-wider">Webhook Endpoint</p>
+                    <p className="text-xs text-slate-300 font-mono select-all truncate bg-black/40 p-2 rounded border border-white/5">
+                      {backendHost}/api/chatbots/webhook/telegram/{selectedAgent.bot_id}
+                    </p>
+                    <button 
+                      onClick={handleSetupTelegramWebhook}
+                      className="mt-2 text-xs font-bold uppercase bg-blue-500 hover:bg-blue-400 text-slate-950 px-4 py-2 rounded-lg transition-colors"
+                    >
+                      Sync & Register Webhook
+                    </button>
+                  </div>
+                )}
+
+                <div className="pt-4 border-t border-white/5">
+                  <button 
+                    onClick={handleSaveIntegrations}
+                    className="bg-cyan-500 hover:bg-cyan-400 text-slate-950 px-6 py-2.5 rounded-xl text-sm font-bold transition-all shadow-[0_0_15px_rgba(6,182,212,0.2)]"
+                  >
+                    Save Telegram Settings
+                  </button>
+                </div>
               </div>
-              <button 
-                onClick={() => copySnippet(curlCommand)}
-                className="text-xs font-bold uppercase tracking-widest flex items-center gap-2 text-cyan-500 hover:text-cyan-300 bg-cyan-500/10 hover:bg-cyan-500/20 px-3 py-1.5 rounded-lg transition-all"
-              >
-                {copied ? <Check className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
-                {copied ? "Secured" : "Copy Payload"}
-              </button>
-            </div>
-            <div className="p-6 overflow-x-auto bg-[#02040a]">
-              <pre className="text-sm font-mono text-cyan-300/80 leading-relaxed">
-                <code>{curlCommand}</code>
-              </pre>
-            </div>
+            )}
+
+            {activeTab === "whatsapp" && (
+              <div className="bg-[#0a0f1c] border border-cyan-500/20 rounded-2xl p-6 space-y-6">
+                <div className="flex items-center justify-between p-4 bg-black/40 border border-white/5 rounded-xl">
+                  <div>
+                    <h4 className="text-sm font-bold text-white">Enable WhatsApp Integration</h4>
+                    <p className="text-xs text-slate-400 mt-1">Connect your WhatsApp Business API and chat with users.</p>
+                  </div>
+                  <button 
+                    onClick={() => setWhatsappEnabled(!whatsappEnabled)}
+                    className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${whatsappEnabled ? 'bg-emerald-500' : 'bg-slate-700'}`}
+                  >
+                    <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${whatsappEnabled ? 'translate-x-6' : 'translate-x-1'}`} />
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <label className="block text-xs font-bold text-slate-400 uppercase tracking-widest">Phone Number ID</label>
+                    <input 
+                      type="text" 
+                      value={whatsappPhoneNumberId}
+                      onChange={e => setWhatsappPhoneNumberId(e.target.value)}
+                      placeholder="e.g., 108345791244309"
+                      className="w-full bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-cyan-500 transition-all text-sm"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="block text-xs font-bold text-slate-400 uppercase tracking-widest">WhatsApp Access Token</label>
+                    <input 
+                      type="password" 
+                      value={whatsappToken}
+                      onChange={e => setWhatsappToken(e.target.value)}
+                      placeholder="Meta Permanent System User Token"
+                      className="w-full bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-cyan-500 transition-all text-sm font-mono"
+                    />
+                  </div>
+                </div>
+
+                {whatsappEnabled && (
+                  <div className="p-4 bg-amber-500/5 border border-amber-500/10 rounded-xl space-y-3">
+                    <p className="text-xs font-bold text-amber-500 uppercase tracking-wider">Meta Webhook Configuration</p>
+                    <p className="text-xs text-slate-400">
+                      Configure these values inside your Meta Developer Console under **WhatsApp &gt; Configuration &gt; Webhooks**:
+                    </p>
+                    <div className="space-y-2 text-xs">
+                      <div>
+                        <span className="text-slate-500">Callback URL:</span>
+                        <div className="font-mono bg-black/40 p-2 rounded border border-white/5 select-all truncate mt-1">
+                          {backendHost}/api/chatbots/webhook/whatsapp/{selectedAgent.bot_id}
+                        </div>
+                      </div>
+                      <div>
+                        <span className="text-slate-500">Verify Token:</span>
+                        <div className="font-mono bg-black/40 p-2 rounded border border-white/5 select-all mt-1">
+                          auraos_verify_{selectedAgent.bot_id}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                <div className="pt-4 border-t border-white/5">
+                  <button 
+                    onClick={handleSaveIntegrations}
+                    className="bg-cyan-500 hover:bg-cyan-400 text-slate-950 px-6 py-2.5 rounded-xl text-sm font-bold transition-all shadow-[0_0_15px_rgba(6,182,212,0.2)]"
+                  >
+                    Save WhatsApp Settings
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       </div>

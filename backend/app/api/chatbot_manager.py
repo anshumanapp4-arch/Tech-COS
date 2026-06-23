@@ -34,6 +34,11 @@ class ChatbotCreate(BaseModel):
     system_prompt: Optional[str] = "You are a helpful assistant."
     temperature: Optional[float] = 0.7
     enable_escalation: Optional[bool] = False
+    whatsapp_enabled: Optional[bool] = False
+    whatsapp_token: Optional[str] = ""
+    whatsapp_phone_number_id: Optional[str] = ""
+    telegram_enabled: Optional[bool] = False
+    telegram_token: Optional[str] = ""
 
 
 class ChatbotResponse(BaseModel):
@@ -51,6 +56,11 @@ class ChatbotResponse(BaseModel):
     status: str
     created_at: str
     organization_id: str
+    whatsapp_enabled: bool
+    whatsapp_token: Optional[str] = None
+    whatsapp_phone_number_id: Optional[str] = None
+    telegram_enabled: bool
+    telegram_token: Optional[str] = None
 
     class Config:
         from_attributes = True
@@ -66,6 +76,8 @@ class ChatbotListResponse(BaseModel):
     status: str
     api_key_prefix: str
     created_at: str
+    whatsapp_enabled: bool
+    telegram_enabled: bool
 
     class Config:
         from_attributes = True
@@ -117,6 +129,11 @@ def create_chatbot(
         api_key_prefix=raw_api_key[:12],
         status="Active",
         organization_id=user.organization_id,
+        whatsapp_enabled=body.whatsapp_enabled or False,
+        whatsapp_token=body.whatsapp_token or "",
+        whatsapp_phone_number_id=body.whatsapp_phone_number_id or "",
+        telegram_enabled=body.telegram_enabled or False,
+        telegram_token=body.telegram_token or "",
     )
 
     db.add(chatbot)
@@ -138,6 +155,11 @@ def create_chatbot(
         status=chatbot.status,
         created_at=chatbot.created_at.isoformat(),
         organization_id=chatbot.organization_id,
+        whatsapp_enabled=chatbot.whatsapp_enabled,
+        whatsapp_token=chatbot.whatsapp_token,
+        whatsapp_phone_number_id=chatbot.whatsapp_phone_number_id,
+        telegram_enabled=chatbot.telegram_enabled,
+        telegram_token=chatbot.telegram_token,
     )
 
 
@@ -162,6 +184,8 @@ def get_chatbots(
             status=b.status,
             api_key_prefix=b.api_key_prefix,
             created_at=b.created_at.isoformat(),
+            whatsapp_enabled=b.whatsapp_enabled,
+            telegram_enabled=b.telegram_enabled,
         )
         for b in bots
     ]
@@ -197,7 +221,47 @@ def get_chatbot(
         status=bot.status,
         created_at=bot.created_at.isoformat(),
         organization_id=bot.organization_id,
+        whatsapp_enabled=bot.whatsapp_enabled,
+        whatsapp_token=bot.whatsapp_token,
+        whatsapp_phone_number_id=bot.whatsapp_phone_number_id,
+        telegram_enabled=bot.telegram_enabled,
+        telegram_token=bot.telegram_token,
     )
+
+
+class ChatbotIntegrationsUpdate(BaseModel):
+    whatsapp_enabled: bool
+    whatsapp_token: Optional[str] = ""
+    whatsapp_phone_number_id: Optional[str] = ""
+    telegram_enabled: bool
+    telegram_token: Optional[str] = ""
+
+
+@router.put("/{bot_id}/integrations", response_model=ChatbotResponse)
+def update_chatbot_integrations(
+    bot_id: str,
+    body: ChatbotIntegrationsUpdate,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Update chatbot's WhatsApp & Telegram settings."""
+    bot = db.query(Chatbot).filter(
+        Chatbot.bot_id == bot_id,
+        Chatbot.organization_id == user.organization_id,
+    ).first()
+
+    if not bot:
+        raise HTTPException(status_code=404, detail="Chatbot not found.")
+
+    bot.whatsapp_enabled = body.whatsapp_enabled
+    bot.whatsapp_token = body.whatsapp_token
+    bot.whatsapp_phone_number_id = body.whatsapp_phone_number_id
+    bot.telegram_enabled = body.telegram_enabled
+    bot.telegram_token = body.telegram_token
+
+    db.commit()
+    db.refresh(bot)
+    return bot
 
 
 @router.delete("/{bot_id}")
@@ -247,3 +311,134 @@ def regenerate_api_key(
     db.commit()
 
     return {"api_key": new_key, "message": "API key regenerated. Store it securely."}
+
+
+# ---------------------------------------------------------------------------
+# Telegram & WhatsApp Webhooks
+# ---------------------------------------------------------------------------
+import os
+import requests
+
+@router.post("/webhook/telegram/{bot_id}")
+async def telegram_webhook(bot_id: str, payload: dict, db: Session = Depends(get_db)):
+    """Webhook for Telegram messages."""
+    bot = db.query(Chatbot).filter(Chatbot.bot_id == bot_id).first()
+    if not bot or not bot.telegram_enabled or not bot.telegram_token:
+        return {"status": "ignored"}
+
+    message = payload.get("message", {})
+    chat_id = message.get("chat", {}).get("id")
+    text = message.get("text")
+
+    if chat_id and text:
+        from .chat import chat_with_bot, ChatRequest, ChatMessage
+        try:
+            chat_req = ChatRequest(
+                messages=[ChatMessage(role="user", content=text)],
+                chatbot_id=bot.bot_id,
+                system_prompt=bot.system_prompt,
+                temperature=bot.temperature,
+                enable_escalation=bot.enable_escalation
+            )
+            chat_res = await chat_with_bot(chat_req, db)
+            reply = chat_res.response
+
+            telegram_url = f"https://api.telegram.org/bot{bot.telegram_token}/sendMessage"
+            requests.post(telegram_url, json={
+                "chat_id": chat_id,
+                "text": reply
+            })
+        except Exception as e:
+            print(f"Telegram webhook error: {e}")
+
+    return {"status": "ok"}
+
+
+@router.post("/{bot_id}/setup-telegram-webhook")
+def setup_telegram_webhook(
+    bot_id: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Register the Webhook URL with Telegram."""
+    bot = db.query(Chatbot).filter(
+        Chatbot.bot_id == bot_id,
+        Chatbot.organization_id == user.organization_id
+    ).first()
+    if not bot:
+        raise HTTPException(status_code=404, detail="Chatbot not found.")
+    if not bot.telegram_token:
+        raise HTTPException(status_code=400, detail="Telegram token not configured.")
+
+    host_url = os.getenv("NEXT_PUBLIC_API_URL", "https://auraos-backend-anshuman.onrender.com")
+    webhook_url = f"{host_url}/api/chatbots/webhook/telegram/{bot_id}"
+    
+    telegram_url = f"https://api.telegram.org/bot{bot.telegram_token}/setWebhook"
+    res = requests.post(telegram_url, json={"url": webhook_url})
+    
+    if res.status_code == 200:
+        return {"status": "success", "message": f"Webhook set to {webhook_url}", "details": res.json()}
+    else:
+        raise HTTPException(status_code=400, detail=f"Telegram API error: {res.text}")
+
+
+@router.get("/webhook/whatsapp/{bot_id}")
+def verify_whatsapp_webhook(
+    bot_id: str,
+    hub_mode: Optional[str] = None,
+    hub_challenge: Optional[int] = None,
+    hub_verify_token: Optional[str] = None
+):
+    """WhatsApp Webhook Verification (required by Meta)."""
+    expected_verify_token = f"auraos_verify_{bot_id}"
+    if hub_mode == "subscribe" and hub_verify_token in [expected_verify_token, "auraos_whatsapp_verify"]:
+        from fastapi.responses import Response
+        return Response(content=str(hub_challenge), media_type="text/plain")
+    raise HTTPException(status_code=403, detail="Verification failed.")
+
+
+@router.post("/webhook/whatsapp/{bot_id}")
+async def whatsapp_webhook(bot_id: str, payload: dict, db: Session = Depends(get_db)):
+    """Handle incoming messages from WhatsApp."""
+    bot = db.query(Chatbot).filter(Chatbot.bot_id == bot_id).first()
+    if not bot or not bot.whatsapp_enabled or not bot.whatsapp_token:
+        return {"status": "ignored"}
+
+    try:
+        entry = payload.get("entry", [{}])[0]
+        changes = entry.get("changes", [{}])[0]
+        value = changes.get("value", {})
+        messages = value.get("messages", [])
+        
+        if messages:
+            message = messages[0]
+            from_phone = message.get("from")
+            text_body = message.get("text", {}).get("body")
+            
+            if from_phone and text_body:
+                from .chat import chat_with_bot, ChatRequest, ChatMessage
+                chat_req = ChatRequest(
+                    messages=[ChatMessage(role="user", content=text_body)],
+                    chatbot_id=bot.bot_id,
+                    system_prompt=bot.system_prompt,
+                    temperature=bot.temperature,
+                    enable_escalation=bot.enable_escalation
+                )
+                chat_res = await chat_with_bot(chat_req, db)
+                reply = chat_res.response
+
+                whatsapp_url = f"https://graph.facebook.com/v17.0/{bot.whatsapp_phone_number_id}/messages"
+                headers = {
+                    "Authorization": f"Bearer {bot.whatsapp_token}",
+                    "Content-Type": "application/json"
+                }
+                requests.post(whatsapp_url, headers=headers, json={
+                    "messaging_product": "whatsapp",
+                    "to": from_phone,
+                    "type": "text",
+                    "text": {"body": reply}
+                })
+    except Exception as e:
+        print(f"WhatsApp webhook error: {e}")
+
+    return {"status": "ok"}

@@ -41,6 +41,52 @@ def init_db():
             print(f"Connecting to database (attempt {attempt}/{max_retries})...")
             Base.metadata.create_all(bind=engine)
             print("SUCCESS: Database connection established and tables initialized.")
+            
+            # Run SQLite migration for new chatbot columns
+            if "sqlite" in str(engine.url):
+                try:
+                    with engine.begin() as conn:
+                        cursor = conn.execute("PRAGMA table_info(chatbots)")
+                        columns = [row[1] for row in cursor.fetchall()]
+                        if columns:
+                            if "whatsapp_enabled" not in columns:
+                                conn.execute("ALTER TABLE chatbots ADD COLUMN whatsapp_enabled BOOLEAN DEFAULT 0")
+                            if "whatsapp_token" not in columns:
+                                conn.execute("ALTER TABLE chatbots ADD COLUMN whatsapp_token TEXT")
+                            if "whatsapp_phone_number_id" not in columns:
+                                conn.execute("ALTER TABLE chatbots ADD COLUMN whatsapp_phone_number_id TEXT")
+                            if "telegram_enabled" not in columns:
+                                conn.execute("ALTER TABLE chatbots ADD COLUMN telegram_enabled BOOLEAN DEFAULT 0")
+                            if "telegram_token" not in columns:
+                                conn.execute("ALTER TABLE chatbots ADD COLUMN telegram_token TEXT")
+                            print("SUCCESS: SQLite database columns migrated successfully.")
+                except Exception as migration_err:
+                    print(f"SQLite migration failed: {migration_err}")
+            
+            # Run PostgreSQL migration for new chatbot columns
+            elif "postgresql" in str(engine.url):
+                try:
+                    with engine.begin() as conn:
+                        cursor = conn.execute("""
+                            SELECT column_name 
+                            FROM information_schema.columns 
+                            WHERE table_name = 'chatbots'
+                        """)
+                        columns = [row[0] for row in cursor.fetchall()]
+                        if columns:
+                            if "whatsapp_enabled" not in columns:
+                                conn.execute("ALTER TABLE chatbots ADD COLUMN whatsapp_enabled BOOLEAN DEFAULT FALSE")
+                            if "whatsapp_token" not in columns:
+                                conn.execute("ALTER TABLE chatbots ADD COLUMN whatsapp_token TEXT")
+                            if "whatsapp_phone_number_id" not in columns:
+                                conn.execute("ALTER TABLE chatbots ADD COLUMN whatsapp_phone_number_id TEXT")
+                            if "telegram_enabled" not in columns:
+                                conn.execute("ALTER TABLE chatbots ADD COLUMN telegram_enabled BOOLEAN DEFAULT FALSE")
+                            if "telegram_token" not in columns:
+                                conn.execute("ALTER TABLE chatbots ADD COLUMN telegram_token TEXT")
+                            print("SUCCESS: PostgreSQL database columns migrated successfully.")
+                except Exception as migration_err:
+                    print(f"PostgreSQL migration failed: {migration_err}")
             return
         except Exception as e:
             if attempt == max_retries:
@@ -52,6 +98,26 @@ def init_db():
                     engine = fallback_engine
                     SessionLocal.configure(bind=fallback_engine)
                     Base.metadata.create_all(bind=fallback_engine)
+                    
+                    # Run migration on fallback SQLite too
+                    try:
+                        with fallback_engine.begin() as conn:
+                            cursor = conn.execute("PRAGMA table_info(chatbots)")
+                            columns = [row[1] for row in cursor.fetchall()]
+                            if columns:
+                                if "whatsapp_enabled" not in columns:
+                                    conn.execute("ALTER TABLE chatbots ADD COLUMN whatsapp_enabled BOOLEAN DEFAULT 0")
+                                if "whatsapp_token" not in columns:
+                                    conn.execute("ALTER TABLE chatbots ADD COLUMN whatsapp_token TEXT")
+                                if "whatsapp_phone_number_id" not in columns:
+                                    conn.execute("ALTER TABLE chatbots ADD COLUMN whatsapp_phone_number_id TEXT")
+                                if "telegram_enabled" not in columns:
+                                    conn.execute("ALTER TABLE chatbots ADD COLUMN telegram_enabled BOOLEAN DEFAULT 0")
+                                if "telegram_token" not in columns:
+                                    conn.execute("ALTER TABLE chatbots ADD COLUMN telegram_token TEXT")
+                    except Exception as fallback_mig_err:
+                        print(f"Fallback SQLite migration failed: {fallback_mig_err}")
+                        
                     print("SUCCESS: Fallback SQLite database successfully initialized.")
                     return
                 except Exception as fallback_err:

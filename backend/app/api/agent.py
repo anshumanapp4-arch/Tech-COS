@@ -13,19 +13,13 @@ from fastapi import APIRouter, BackgroundTasks
 from pydantic import BaseModel
 from typing import Optional, Dict
 
+from ..config import GEMINI_API_KEY
+
 router = APIRouter()
 
 # ---------------------------------------------------------------------------
 # External service initialization (graceful)
 # ---------------------------------------------------------------------------
-
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-if GEMINI_API_KEY and GEMINI_API_KEY.startswith("base64:"):
-    import base64
-    try:
-        GEMINI_API_KEY = base64.b64decode(GEMINI_API_KEY[7:]).decode("utf-8")
-    except Exception:
-        pass
 
 gemini_client = None
 if GEMINI_API_KEY:

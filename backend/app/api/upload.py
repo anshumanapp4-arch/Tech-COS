@@ -19,8 +19,7 @@ from sqlalchemy.orm import Session
 
 from ..models import Document, Subscription, User, generate_uuid
 from .deps import get_db, get_current_user, get_optional_user
-
-load_dotenv()
+from ..config import SARVAM_API_KEY, GEMINI_API_KEY, PINECONE_API_KEY, PINECONE_INDEX_NAME
 
 router = APIRouter()
 UPLOAD_DIR = "uploads"
@@ -29,20 +28,6 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 # ---------------------------------------------------------------------------
 # External service initialization (graceful)
 # ---------------------------------------------------------------------------
-
-SARVAM_API_KEY = os.getenv("SARVAM_API_KEY")
-if SARVAM_API_KEY:
-    print("[OK] Upload: Sarvam STT API key configured.")
-else:
-    print("[INFO] Upload: No SARVAM_API_KEY -- transcription will use fallback mode.")
-
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-if GEMINI_API_KEY and GEMINI_API_KEY.startswith("base64:"):
-    import base64
-    try:
-        GEMINI_API_KEY = base64.b64decode(GEMINI_API_KEY[7:]).decode("utf-8")
-    except Exception:
-        pass
 
 gemini_client = None
 if GEMINI_API_KEY:
@@ -53,10 +38,7 @@ if GEMINI_API_KEY:
     except Exception as e:
         print(f"[WARN] Upload: Gemini client init failed: {e}")
 
-PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
-PINECONE_INDEX_NAME = os.getenv("PINECONE_INDEX_NAME", "auraos")
 pinecone_index = None
-
 if PINECONE_API_KEY:
     try:
         from pinecone import Pinecone
@@ -149,13 +131,35 @@ def transcribe_with_sarvam(file_path: str, file_id: str) -> str:
 # ---------------------------------------------------------------------------
 
 def transcribe_fallback(file_path: str, file_id: str, original_filename: str) -> str:
-    """
-    Fallback transcription when Sarvam API is unavailable.
-    For text files: reads content directly.
-    For audio/video: creates a descriptive placeholder.
-    """
     ext = os.path.splitext(original_filename)[1].lower()
     file_size_mb = os.path.getsize(file_path) / (1024 * 1024)
+
+    # PDF files — extract text using pypdf
+    if ext in [".pdf"]:
+        try:
+            from pypdf import PdfReader
+            reader = PdfReader(file_path)
+            text = ""
+            for page in reader.pages:
+                text += page.extract_text() or ""
+            return text.strip() if text.strip() else f"Empty PDF file: {original_filename}"
+        except Exception as pdf_err:
+            print(f"PDF extraction error: {pdf_err}")
+            return f"Error extracting text from PDF file: {original_filename}\n{str(pdf_err)}"
+
+    # Word Documents — extract text using python-docx
+    if ext in [".docx"]:
+        try:
+            import docx
+            doc = docx.Document(file_path)
+            fullText = []
+            for para in doc.paragraphs:
+                fullText.append(para.text)
+            text = "\n".join(fullText)
+            return text.strip() if text.strip() else f"Empty Document: {original_filename}"
+        except Exception as docx_err:
+            print(f"DOCX extraction error: {docx_err}")
+            return f"Error extracting text from DOCX file: {original_filename}\n{str(docx_err)}"
 
     # Text files — read content directly
     if ext in [".txt", ".text"]:
@@ -255,21 +259,51 @@ def embed_and_store(transcription: str, file_id: str, organization_id: str):
 # Background processing task
 # ---------------------------------------------------------------------------
 
-def process_audio(file_path: str, file_id: str, original_filename: str, organization_id: str):
+def translate_text(text: str, target_language: str) -> str:
+    """Translate text using Gemini if target_language is specified and gemini is available."""
+    if not target_language or target_language.lower() in ["original", "none", "auto", ""]:
+        return text
+    if not gemini_client:
+        return text + f"\n\n[Translation to {target_language} skipped: Gemini client unavailable]"
+    
+    prompt = f"Translate the following text into {target_language}. Respond ONLY with the translation, maintaining paragraph structure:\n\n{text}"
+    try:
+        response = gemini_client.models.generate_content(
+            model="gemini-1.5-flash",
+            contents=prompt
+        )
+        return response.text.strip()
+    except Exception as e:
+        print(f"Translation to {target_language} failed: {e}")
+        return text + f"\n\n[Translation to {target_language} failed: {e}]"
+
+
+# ---------------------------------------------------------------------------
+# Background processing task
+# ---------------------------------------------------------------------------
+
+def process_audio(file_path: str, file_id: str, original_filename: str, organization_id: str, target_language: str = "original"):
     """Process uploaded media in the background: transcribe, chunk, embed, store."""
     from ..database import SessionLocal
 
     db = SessionLocal()
-    print(f"Starting processing for {file_id} (org: {organization_id})")
+    print(f"Starting processing for {file_id} (org: {organization_id}, language: {target_language})")
 
     try:
-        # Step 1: Transcribe
-        if SARVAM_API_KEY:
+        # Step 1: Transcribe / Extract Text
+        ext = os.path.splitext(original_filename)[1].lower()
+        is_media = ext in [".mp3", ".wav", ".m4a", ".mp4", ".mpeg", ".ogg", ".aac"]
+
+        if is_media and SARVAM_API_KEY:
             transcription = transcribe_with_sarvam(file_path, file_id)
         else:
             transcription = transcribe_fallback(file_path, file_id, original_filename)
 
-        print(f"Transcription successful for {file_id}: {transcription[:100]}...")
+        # Step 1.5: Translate if requested
+        if target_language and target_language.lower() != "original":
+            transcription = translate_text(transcription, target_language)
+
+        print(f"Processing successful for {file_id}: {transcription[:100]}...")
 
         # Save JSON for legacy compatibility
         with open(f"uploads/{file_id}.json", "w") as f:
@@ -311,6 +345,7 @@ def process_audio(file_path: str, file_id: str, original_filename: str, organiza
 async def upload_audio(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
+    language: str = "original",
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -348,7 +383,7 @@ async def upload_audio(
     db.commit()
 
     background_tasks.add_task(
-        process_audio, file_path, file_id, file.filename, user.organization_id
+        process_audio, file_path, file_id, file.filename, user.organization_id, language
     )
 
     mode = "full" if SARVAM_API_KEY else "local"

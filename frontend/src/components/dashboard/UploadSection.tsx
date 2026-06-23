@@ -11,6 +11,7 @@ export default function UploadSection() {
   const [status, setStatus] = useState<"idle" | "uploading" | "processing" | "done" | "error">("idle");
   const [transcription, setTranscription] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [targetLanguage, setTargetLanguage] = useState<string>("original");
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const handleDrop = (e: React.DragEvent) => {
@@ -30,6 +31,7 @@ export default function UploadSection() {
     setStatus("idle");
     setTranscription(null);
     setErrorMessage(null);
+    setTargetLanguage("original");
   };
 
   const handleUpload = async () => {
@@ -40,6 +42,7 @@ export default function UploadSection() {
     try {
       const formData = new FormData();
       formData.append("file", file);
+      formData.append("language", targetLanguage);
       
       const res = await authFetch("/api/upload/", {
         method: "POST",
@@ -174,13 +177,34 @@ export default function UploadSection() {
                 <p className="text-white/50 text-sm mt-1">{(file.size / (1024 * 1024)).toFixed(2)} MB</p>
                 
                 {status === "idle" && (
-                  <div className="flex gap-3 mt-6">
-                    <button onClick={handleUpload} className="glass-button max-w-xs">
-                      Start Processing
-                    </button>
-                    <button onClick={resetUpload} className="px-4 py-2 text-white/50 hover:text-white/80 text-sm transition-colors">
-                      Cancel
-                    </button>
+                  <div className="flex flex-col items-center gap-4 mt-6">
+                    <div className="flex items-center gap-3">
+                      <span className="text-white/60 text-xs font-bold uppercase tracking-wider">Target Language:</span>
+                      <select 
+                        value={targetLanguage} 
+                        onChange={(e) => setTargetLanguage(e.target.value)}
+                        className="bg-black/50 border border-white/10 rounded-xl px-3 py-1.5 text-xs text-white focus:outline-none focus:border-emerald-500 transition-all font-medium cursor-pointer"
+                      >
+                        <option value="original">Original (No Translation)</option>
+                        <option value="English">English</option>
+                        <option value="Hindi">Hindi (हिन्दी)</option>
+                        <option value="Spanish">Spanish (Español)</option>
+                        <option value="French">French (Français)</option>
+                        <option value="German">German (Deutsch)</option>
+                        <option value="Japanese">Japanese (日本語)</option>
+                        <option value="Chinese">Chinese (中文)</option>
+                        <option value="Arabic">Arabic (العربية)</option>
+                        <option value="Portuguese">Portuguese (Português)</option>
+                      </select>
+                    </div>
+                    <div className="flex gap-3">
+                      <button onClick={handleUpload} className="glass-button max-w-xs">
+                        Start Processing
+                      </button>
+                      <button onClick={resetUpload} className="px-4 py-2 text-white/50 hover:text-white/80 text-sm transition-colors">
+                        Cancel
+                      </button>
+                    </div>
                   </div>
                 )}
                 {status === "uploading" && (

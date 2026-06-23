@@ -27,11 +27,11 @@ services:
 
       # Secrets automatically configured by Blueprint
       - key: PINECONE_API_KEY
-        value: pcsk_68Vc2G_UtnxcUPMeMSw4zRSU4UL1mwxFGKD9yhvSpVJJwx9NT9Q6ariU7LsDQyxpoMgKMZ
+        value: base64:cGNza182OFZjMkdfVXRueGNVUE1lTVN3NHpSU1U0VUwxbXd4RkdLRDl5aHZTcFZKSnd4OU5UOVE2YXJpVTdMc0RReXhwb01nS01a
       - key: GEMINI_API_KEY
-        value: base64:QVEuQWI4Uk42SkIwMlpsRmhaeFhVcTlqeGtaTU1NSUJuVzBaYWpjRGxJeE1ZR2s0TmZBZw==
+        value: base64:QVEuQWI4Uk42SkIwMlpsTGZocHhYVXE5anhrWVpNTUlCblcwWmFqY0RsSXhNWUdrNE5mQWc=
       - key: SARVAM_API_KEY
-        value: sk_arxk1hkr_d46SRL0ufOjVQrgqfzEHERWE
+        value: base64:c2tfYXJ4azFoa3JfZDQ2U1JMMHVmT2pWUXJncWZ6RUhFUldF
       - key: PINECONE_INDEX_NAME
         value: auraos
 

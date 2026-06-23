@@ -95,6 +95,14 @@ class Chatbot(Base):
     organization_id = Column(String(32), ForeignKey("organizations.id"), nullable=False)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
+    # Integration Configurations
+    whatsapp_enabled = Column(Boolean, default=False)
+    whatsapp_token = Column(String(255), nullable=True)
+    whatsapp_phone_number_id = Column(String(255), nullable=True)
+    
+    telegram_enabled = Column(Boolean, default=False)
+    telegram_token = Column(String(255), nullable=True)
+
     # Relationships
     organization = relationship("Organization", back_populates="chatbots")
 

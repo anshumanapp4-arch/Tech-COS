@@ -47,14 +47,12 @@ def on_startup():
     print("  AuraOS v2.0 - Service Health Report")
     print("=" * 60)
 
-    gemini_key = os.getenv("GEMINI_API_KEY")
-    sarvam_key = os.getenv("SARVAM_API_KEY")
-    pinecone_key = os.getenv("PINECONE_API_KEY")
+    from .config import GEMINI_API_KEY, SARVAM_API_KEY, PINECONE_API_KEY
 
     print(f"  Database     : [OK] Initialized")
-    print(f"  Gemini AI    : {'[OK] Configured' if gemini_key else '[WARN] Missing GEMINI_API_KEY (chat/embed fallback active)'}")
-    print(f"  Sarvam STT   : {'[OK] Configured' if sarvam_key else '[WARN] Missing SARVAM_API_KEY (transcription fallback active)'}")
-    print(f"  Pinecone     : {'[OK] Configured' if pinecone_key else '[WARN] Missing PINECONE_API_KEY (SQL search fallback active)'}")
+    print(f"  Gemini AI    : {'[OK] Configured' if GEMINI_API_KEY else '[WARN] Missing GEMINI_API_KEY (chat/embed fallback active)'}")
+    print(f"  Sarvam STT   : {'[OK] Configured' if SARVAM_API_KEY else '[WARN] Missing SARVAM_API_KEY (transcription fallback active)'}")
+    print(f"  Pinecone     : {'[OK] Configured' if PINECONE_API_KEY else '[WARN] Missing PINECONE_API_KEY (SQL search fallback active)'}")
 
     try:
         from playwright.async_api import async_playwright

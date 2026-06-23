@@ -12,20 +12,13 @@ from sqlalchemy.orm import Session
 
 from ..models import Chatbot, Subscription, Document, hash_api_key
 from .deps import get_db
+from ..config import GEMINI_API_KEY, PINECONE_API_KEY, PINECONE_INDEX_NAME
 
 router = APIRouter()
 
 # ---------------------------------------------------------------------------
 # External service initialization (graceful)
 # ---------------------------------------------------------------------------
-
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-if GEMINI_API_KEY and GEMINI_API_KEY.startswith("base64:"):
-    import base64
-    try:
-        GEMINI_API_KEY = base64.b64decode(GEMINI_API_KEY[7:]).decode("utf-8")
-    except Exception:
-        pass
 
 gemini_client = None
 if GEMINI_API_KEY:
@@ -36,10 +29,7 @@ if GEMINI_API_KEY:
     except Exception as e:
         print(f"[WARN] Chat: Gemini client init failed: {e}")
 
-PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
-PINECONE_INDEX_NAME = os.getenv("PINECONE_INDEX_NAME", "auraos")
 pinecone_index = None
-
 if PINECONE_API_KEY:
     try:
         from pinecone import Pinecone
