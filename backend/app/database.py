@@ -21,8 +21,16 @@ if DATABASE_URL.startswith("postgresql://"):
     except ImportError:
         DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+pg8000://", 1)
 
-# For SQLite we need check_same_thread=False to allow FastAPI's threaded access
-connect_args = {"check_same_thread": False} if "sqlite" in DATABASE_URL else {}
+# For SQLite we need check_same_thread=False to allow FastAPI's threaded access.
+# For PostgreSQL, set a 5-second connection timeout to prevent startup hangs when unreachable.
+connect_args = {}
+if "sqlite" in DATABASE_URL:
+    connect_args = {"check_same_thread": False}
+elif "postgresql" in DATABASE_URL:
+    if "pg8000" in DATABASE_URL:
+        connect_args = {"timeout": 5}
+    else:
+        connect_args = {"connect_timeout": 5}
 
 engine = create_engine(DATABASE_URL, connect_args=connect_args, echo=False)
 
