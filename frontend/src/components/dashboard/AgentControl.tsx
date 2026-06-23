@@ -16,6 +16,8 @@ export default function AgentControl() {
   const [loading, setLoading] = useState(false);
   const [logs, setLogs] = useState<string[]>([]);
   const [taskStatus, setTaskStatus] = useState<"idle" | "running" | "completed" | "error">("idle");
+  const [result, setResult] = useState<string | null>(null);
+  const [screenshotUrl, setScreenshotUrl] = useState<string | null>(null);
   const logsEndRef = useRef<HTMLDivElement>(null);
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -74,12 +76,17 @@ export default function AgentControl() {
           setLogs(prev => [...prev, `> ✅ Task completed successfully. Mode: ${data.mode}`]);
           if (data.result) {
             setLogs(prev => [...prev, `> 📋 Result: ${data.result.substring(0, 200)}`]);
+            setResult(data.result);
+          }
+          if (data.screenshot_url) {
+            setScreenshotUrl(data.screenshot_url);
           }
           setTaskStatus("completed");
           setLoading(false);
         } else if (data.status === "error") {
           if (pollingRef.current) clearInterval(pollingRef.current);
           setLogs(prev => [...prev, `> ❌ Task failed: ${data.result || "Unknown error"}`]);
+          setResult(data.result || "Execution failed.");
           setTaskStatus("error");
           setLoading(false);
         }
@@ -94,6 +101,8 @@ export default function AgentControl() {
     setLoading(true);
     setTaskStatus("running");
     setLogs(["> 🚀 Sending command to Web Agent..."]);
+    setResult(null);
+    setScreenshotUrl(null);
     
     try {
       const res = await authFetch("/api/agent/execute", {
@@ -226,6 +235,40 @@ export default function AgentControl() {
           <div ref={logsEndRef} />
         </div>
       </div>
+
+      {result && (
+        <div className="mt-6 bg-emerald-500/5 border border-emerald-500/10 rounded-2xl p-5 animate-in fade-in duration-300">
+          <h3 className="text-sm font-bold uppercase tracking-wider text-emerald-400 mb-3 flex items-center gap-2">
+            <CheckCircle className="w-4 h-4" /> Agent Execution Result
+          </h3>
+          <div className="bg-black/30 border border-white/5 rounded-xl p-4 text-sm text-white/90 whitespace-pre-wrap leading-relaxed">
+            {result}
+          </div>
+          
+          {screenshotUrl && (
+            <div className="mt-4">
+              <span className="text-xs text-white/40 block mb-2 font-medium">Captured Page View:</span>
+              <div className="rounded-xl overflow-hidden border border-white/10 bg-slate-900 flex items-center justify-center max-h-96">
+                <img 
+                  src={
+                    screenshotUrl.startsWith("http") 
+                      ? screenshotUrl 
+                      : `${process.env.NEXT_PUBLIC_API_URL || ""}${screenshotUrl}`
+                  } 
+                  alt="Agent Screenshot" 
+                  className="w-full h-auto object-cover object-top"
+                  onError={(e) => {
+                    const target = e.target as HTMLImageElement;
+                    if (!target.src.startsWith(window.location.origin)) {
+                      target.src = window.location.origin + screenshotUrl;
+                    }
+                  }}
+                />
+              </div>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

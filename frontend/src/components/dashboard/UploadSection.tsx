@@ -157,7 +157,7 @@ export default function UploadSection() {
                 setTranscription(null);
               }
             }}
-            accept="audio/*,video/*,.txt,.csv,.text"
+            accept="audio/*,video/*,.txt,.csv,.text,.pdf,.docx"
           />
           <AnimatePresence mode="wait">
             {!file ? (
@@ -166,8 +166,8 @@ export default function UploadSection() {
                   <div className="w-16 h-16 rounded-full bg-white/5 flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
                     <UploadCloud className="w-8 h-8 text-blue-400" />
                   </div>
-                  <p className="text-lg font-medium">Click or Drag & Drop your media here</p>
-                  <p className="text-white/40 text-sm mt-2">Supports audio, video, and text files • No duration limits</p>
+                  <p className="text-lg font-medium">Click or Drag & Drop your file here</p>
+                  <p className="text-white/40 text-sm mt-2">Supports audio, video, PDF, Word, and text files • No duration limits</p>
                 </label>
               </motion.div>
             ) : (

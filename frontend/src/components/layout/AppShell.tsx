@@ -24,8 +24,8 @@ function AppLayout({ children }: { children: React.ReactNode }) {
     }
   }, [loading, isAuthenticated, isAuthPage, router]);
 
-  // Show a premium loading screen while verifying auth state
-  if (loading) {
+  // Show a premium loading screen while verifying auth state (only for protected routes)
+  if (loading && !isAuthPage) {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center relative overflow-hidden bg-slate-950">
         <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[500px] h-[500px] bg-blue-500/10 blur-[120px] rounded-full" />
@@ -42,6 +42,7 @@ function AppLayout({ children }: { children: React.ReactNode }) {
       </div>
     );
   }
+
 
   // If loading is done, make sure we only render children when they match the auth state
   if (!isAuthenticated && !isAuthPage) {

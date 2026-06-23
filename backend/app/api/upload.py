@@ -11,7 +11,7 @@ import json
 import subprocess
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, File, UploadFile, BackgroundTasks, Depends, HTTPException
+from fastapi import APIRouter, File, UploadFile, Form, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel
 from typing import Optional
 from dotenv import load_dotenv
@@ -345,7 +345,7 @@ def process_audio(file_path: str, file_id: str, original_filename: str, organiza
 async def upload_audio(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
-    language: str = "original",
+    language: str = Form("original"),
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):

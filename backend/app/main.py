@@ -1,5 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from .api import upload, chat, agent, chatbot_manager, auth, billing
 from .database import init_db
 
@@ -35,6 +36,9 @@ app.include_router(upload.router, prefix="/api/upload", tags=["Upload"])
 app.include_router(chat.router, prefix="/api/chat", tags=["Chat"])
 app.include_router(agent.router, prefix="/api/agent", tags=["Web Agent"])
 app.include_router(chatbot_manager.router, prefix="/api/chatbots", tags=["Chatbot Management"])
+
+# Serve agent screenshots and uploaded files
+app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
 
 
 @app.on_event("startup")

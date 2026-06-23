@@ -14,9 +14,11 @@ services:
     region: oregon
     rootDir: backend
     envVars:
-      # Will fall back to SQLite if not provided manually in Render Dashboard
+      # Production PostgreSQL Database injection
       - key: DATABASE_URL
-        sync: false
+        fromDatabase:
+          name: auraos-db-anshuman
+          property: connectionString
 
       # Automatically injected frontend URL for CORS middleware
       - key: FRONTEND_URL
@@ -57,3 +59,10 @@ services:
           type: web
           name: auraos-backend-anshuman
           property: host
+
+databases:
+  - name: auraos-db-anshuman
+    databaseName: auraos_db
+    user: auraos_user
+    plan: free
+

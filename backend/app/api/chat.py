@@ -279,21 +279,22 @@ async def chat_with_bot(
                         db, user_query, organization_id, request.chatbot_id
                     )
 
-                context_str = "\n".join(context_texts)
+                context_str = "\n".join(context_texts) if context_texts else "[No context available]"
 
                 # 3. Call LLM (Gemini) with context
                 escalation_rule = ""
                 if request.enable_escalation:
                     escalation_rule = """
-CRITICAL ESCALATION RULE: If the user's question cannot be answered completely and accurately using the provided context, or if it represents a "New Problem Profile", you MUST immediately halt automation and output EXACTLY the following token: [ESCALATE]
-Do not guess or invent answers.
+CRITICAL ESCALATION RULE: If the user's question represents a complex support issue or a complaint that cannot be answered using the provided context, you MUST halt automation and output EXACTLY the token: [ESCALATE]
 """
 
                 prompt = f"""
 System Guardrails: {request.system_prompt}
-{escalation_rule}
 
-STRICT DATA GUARDRAIL: You are an AI assistant bound to a specific knowledge base. You MUST ONLY answer the user's question using the information provided in the 'Context extracted from media' below. If the answer is not present in the context, you must reply: "I cannot answer this based on my current knowledge base." Do NOT use external knowledge. Do NOT hallucinate.
+You are a helpful AI assistant. If context is provided below, prioritize answering the user's question using that context.
+If the user's message is a greeting or general conversational query (e.g., "hello", "hi", "who are you?", "tell me a joke"), respond politely, naturally, and helpfully.
+If the user's message asks for specific information, facts, or instructions that are missing from the context, respond with: "I cannot answer this based on my current knowledge base."
+{escalation_rule}
 
 Context extracted from media:
 {context_str}
