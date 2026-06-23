@@ -269,7 +269,7 @@ def translate_text(text: str, target_language: str) -> str:
     prompt = f"Translate the following text into {target_language}. Respond ONLY with the translation, maintaining paragraph structure:\n\n{text}"
     try:
         response = gemini_client.models.generate_content(
-            model="gemini-1.5-flash",
+            model="gemini-2.5-flash",
             contents=prompt
         )
         return response.text.strip()

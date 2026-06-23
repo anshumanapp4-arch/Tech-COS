@@ -80,4 +80,10 @@ def read_root():
 
 @app.get("/api/health")
 def health_check():
-    return {"status": "healthy", "version": "2.0.0"}
+    from .database import engine
+    db_type = "postgresql" if "postgresql" in str(engine.url) else "sqlite"
+    return {
+        "status": "healthy",
+        "version": "2.0.0",
+        "database": db_type
+    }
