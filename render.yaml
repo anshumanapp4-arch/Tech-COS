@@ -14,11 +14,9 @@ services:
     region: oregon
     rootDir: backend
     envVars:
-      # Production PostgreSQL Database injection
+      # Database Connection URL (Set manually in Render Dashboard if using external DB)
       - key: DATABASE_URL
-        fromDatabase:
-          name: auraos-db-anshuman
-          property: connectionString
+        sync: false
 
       # Automatically injected frontend URL for CORS middleware
       - key: FRONTEND_URL
@@ -60,9 +58,4 @@ services:
           name: auraos-backend-anshuman
           property: host
 
-databases:
-  - name: auraos-db-anshuman
-    databaseName: auraos_db
-    user: auraos_user
-    plan: free
 
