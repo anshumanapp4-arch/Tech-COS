@@ -1,41 +1,53 @@
 """
-Chat API — multi-tenant edition.
-Validates API keys against the database and restricts ChromaDB
-queries to the chatbot's organization's documents only.
+Chat API — multi-tenant edition with graceful fallback.
+When Gemini/Pinecone are available: full RAG pipeline.
+When unavailable: falls back to SQL-based context search + built-in response engine.
 """
 
 import os
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from typing import List, Optional
-from google import genai
-from pinecone import Pinecone
 from sqlalchemy.orm import Session
 
-from ..models import Chatbot, Subscription, hash_api_key
+from ..models import Chatbot, Subscription, Document, hash_api_key
 from .deps import get_db
 
 router = APIRouter()
 
-PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
-PINECONE_INDEX_NAME = os.getenv("PINECONE_INDEX_NAME", "auraos")
-
-if PINECONE_API_KEY:
-    try:
-        pc = Pinecone(api_key=PINECONE_API_KEY)
-        pinecone_index = pc.Index(PINECONE_INDEX_NAME)
-    except Exception as e:
-        print(f"WARNING: Could not connect to Pinecone index '{PINECONE_INDEX_NAME}': {e}")
-        print("Please ensure you have created a Pinecone index with 768 dimensions (for gemini-embedding-2) and cosine metric.")
-        pinecone_index = None
-else:
-    pinecone_index = None
+# ---------------------------------------------------------------------------
+# External service initialization (graceful)
+# ---------------------------------------------------------------------------
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 gemini_client = None
 if GEMINI_API_KEY:
-    gemini_client = genai.Client(api_key=GEMINI_API_KEY)
+    try:
+        from google import genai
+        gemini_client = genai.Client(api_key=GEMINI_API_KEY)
+        print("[OK] Chat: Gemini AI client initialized.")
+    except Exception as e:
+        print(f"[WARN] Chat: Gemini client init failed: {e}")
 
+PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
+PINECONE_INDEX_NAME = os.getenv("PINECONE_INDEX_NAME", "auraos")
+pinecone_index = None
+
+if PINECONE_API_KEY:
+    try:
+        from pinecone import Pinecone
+        pc = Pinecone(api_key=PINECONE_API_KEY)
+        pinecone_index = pc.Index(PINECONE_INDEX_NAME)
+        print(f"[OK] Chat: Pinecone index '{PINECONE_INDEX_NAME}' connected.")
+    except Exception as e:
+        print(f"[WARN] Chat: Pinecone connection failed: {e}")
+else:
+    print("[INFO] Chat: No PINECONE_API_KEY -- using SQL-based context search.")
+
+
+# ---------------------------------------------------------------------------
+# Schemas
+# ---------------------------------------------------------------------------
 
 class ChatMessage(BaseModel):
     role: str
@@ -57,16 +69,128 @@ class ChatResponse(BaseModel):
     requires_human: bool = False
 
 
+# ---------------------------------------------------------------------------
+# Fallback: SQL-based context search
+# ---------------------------------------------------------------------------
+
+def search_context_sql(
+    db: Session,
+    query: str,
+    organization_id: Optional[str] = None,
+    file_id: Optional[str] = None,
+    limit: int = 3,
+) -> List[str]:
+    """Search for relevant context in the documents table using SQL LIKE."""
+    q = db.query(Document).filter(
+        Document.status == "completed",
+        Document.transcription.isnot(None),
+    )
+    if organization_id:
+        q = q.filter(Document.organization_id == organization_id)
+    if file_id and file_id != "default":
+        q = q.filter(Document.file_id == file_id)
+
+    docs = q.all()
+    if not docs:
+        return []
+
+    # Simple keyword matching: score documents by how many query words they contain
+    query_words = [w.lower() for w in query.split() if len(w) > 2]
+    scored = []
+    for doc in docs:
+        text = (doc.transcription or "").lower()
+        score = sum(1 for word in query_words if word in text)
+        if score > 0:
+            # Extract a relevant snippet (first 500 chars around the match)
+            snippet = doc.transcription[:500] if doc.transcription else ""
+            scored.append((score, snippet))
+
+    scored.sort(key=lambda x: x[0], reverse=True)
+    return [s[1] for s in scored[:limit]]
+
+
+# ---------------------------------------------------------------------------
+# Fallback: Built-in response engine (no Gemini needed)
+# ---------------------------------------------------------------------------
+
+def generate_fallback_response(
+    user_query: str,
+    context_texts: List[str],
+    system_prompt: str,
+    enable_escalation: bool,
+) -> tuple[str, bool]:
+    """
+    Generate a response without Gemini.
+    Uses context from DB if available, otherwise gives a helpful response.
+    """
+    requires_human = False
+
+    if context_texts:
+        # We have context — create a response referencing it
+        combined_context = "\n".join(context_texts)
+
+        # Check if query words appear in context
+        query_words = [w.lower() for w in user_query.split() if len(w) > 2]
+        relevant_sentences = []
+        for ctx in context_texts:
+            sentences = ctx.replace(".", ".\n").split("\n")
+            for sentence in sentences:
+                sentence = sentence.strip()
+                if not sentence:
+                    continue
+                if any(word in sentence.lower() for word in query_words):
+                    relevant_sentences.append(sentence)
+
+        if relevant_sentences:
+            response = "Based on the knowledge base, here's what I found:\n\n"
+            for i, sent in enumerate(relevant_sentences[:5], 1):
+                response += f"• {sent}\n"
+            response += "\n_This response was generated from your uploaded documents._"
+        else:
+            response = (
+                "I found some related documents in the knowledge base, but I couldn't locate "
+                "a specific answer to your question. Here's a summary of what's available:\n\n"
+                f"_{combined_context[:300]}..._\n\n"
+                "Try rephrasing your question or asking about specific topics covered in your uploads."
+            )
+    else:
+        # No context at all
+        if enable_escalation:
+            requires_human = True
+            return (
+                "I don't have any relevant context to answer this question. "
+                "Escalating to a human operator for assistance.",
+                True,
+            )
+
+        response = (
+            "👋 I'm your AuraOS AI Assistant! I'm currently running in **local mode** "
+            "(without external AI services).\n\n"
+            "Here's what I can do:\n"
+            "• **Answer questions** based on uploaded documents in the knowledge base\n"
+            "• **Search** through transcriptions and uploaded media\n"
+            "• **Escalate** complex queries to human operators\n\n"
+            "To get started, upload some media files through the **Media Processing** section, "
+            "then I'll be able to answer questions about that content!\n\n"
+            "_To enable full AI responses, configure your `GEMINI_API_KEY` in the backend `.env` file._"
+        )
+
+    return response, requires_human
+
+
+# ---------------------------------------------------------------------------
+# Main endpoint
+# ---------------------------------------------------------------------------
+
 @router.post("/", response_model=ChatResponse)
 async def chat_with_bot(
     request: ChatRequest,
     db: Session = Depends(get_db)
 ):
     """
-    Chat endpoint.
-    Resolves chatbot config from the database using api_key or chatbot_id.
-    Scopes ChromaDB retrieval to the chatbot's organization.
-    Tracks query usage against subscription limits.
+    Chat endpoint with graceful degradation.
+    - Full mode: Gemini + Pinecone (RAG)
+    - Fallback mode: SQL context search + built-in response engine
     """
 
     organization_id = None
@@ -108,50 +232,67 @@ async def chat_with_bot(
     try:
         user_query = request.messages[-1].content
 
-        # 1. Embed user query
-        embed_result = gemini_client.models.embed_content(
-            model="gemini-embedding-2",
-            contents=user_query
-        )
-        query_embedding = embed_result.embeddings[0].values
-
-        # 2. Search Vector DB for context — scoped to organization
-        context_texts = []
-        try:
-            if pinecone_index:
-                filter_clause = None
-                if organization_id and request.chatbot_id and request.chatbot_id != "default":
-                    filter_clause = {
-                        "file_id": request.chatbot_id,
-                        "organization_id": organization_id,
-                    }
-                elif organization_id:
-                    filter_clause = {"organization_id": organization_id}
-                elif request.chatbot_id and request.chatbot_id != "default":
-                    filter_clause = {"file_id": request.chatbot_id}
-
-                results = pinecone_index.query(
-                    vector=query_embedding,
-                    top_k=3,
-                    include_metadata=True,
-                    filter=filter_clause
+        # -------------------------------------------------------------------
+        # FULL MODE: Gemini + Pinecone available
+        # -------------------------------------------------------------------
+        if gemini_client:
+            try:
+                # 1. Embed user query
+                embed_result = gemini_client.models.embed_content(
+                    model="gemini-embedding-2",
+                    contents=user_query
                 )
-                
-                context_texts = [match['metadata']['text'] for match in results.get('matches', []) if 'text' in match.get('metadata', {})]
-        except Exception as query_err:
-            print(f"Pinecone query error: {query_err}")
+                query_embedding = embed_result.embeddings[0].values
 
-        context_str = "\n".join(context_texts)
+                # 2. Search Vector DB for context — scoped to organization
+                context_texts = []
+                if pinecone_index:
+                    try:
+                        filter_clause = None
+                        if organization_id and request.chatbot_id and request.chatbot_id != "default":
+                            filter_clause = {
+                                "file_id": request.chatbot_id,
+                                "organization_id": organization_id,
+                            }
+                        elif organization_id:
+                            filter_clause = {"organization_id": organization_id}
+                        elif request.chatbot_id and request.chatbot_id != "default":
+                            filter_clause = {"file_id": request.chatbot_id}
 
-        # 3. Call LLM (Gemini) with context + guardrails + user message
-        escalation_rule = ""
-        if request.enable_escalation:
-            escalation_rule = """
+                        results = pinecone_index.query(
+                            vector=query_embedding,
+                            top_k=3,
+                            include_metadata=True,
+                            filter=filter_clause
+                        )
+
+                        context_texts = [
+                            match['metadata']['text']
+                            for match in results.get('matches', [])
+                            if 'text' in match.get('metadata', {})
+                        ]
+                    except Exception as query_err:
+                        print(f"Pinecone query error (falling back to SQL): {query_err}")
+                        context_texts = search_context_sql(
+                            db, user_query, organization_id, request.chatbot_id
+                        )
+                else:
+                    # No Pinecone — use SQL fallback for context
+                    context_texts = search_context_sql(
+                        db, user_query, organization_id, request.chatbot_id
+                    )
+
+                context_str = "\n".join(context_texts)
+
+                # 3. Call LLM (Gemini) with context
+                escalation_rule = ""
+                if request.enable_escalation:
+                    escalation_rule = """
 CRITICAL ESCALATION RULE: If the user's question cannot be answered completely and accurately using the provided context, or if it represents a "New Problem Profile", you MUST immediately halt automation and output EXACTLY the following token: [ESCALATE]
 Do not guess or invent answers.
 """
 
-        prompt = f"""
+                prompt = f"""
 System Guardrails: {request.system_prompt}
 {escalation_rule}
 
@@ -163,27 +304,48 @@ Context extracted from media:
 User Question: {user_query}
 """
 
-        response = gemini_client.models.generate_content(
-            model='gemini-2.5-flash',
-            contents=prompt,
-            config={"temperature": request.temperature}
+                response = gemini_client.models.generate_content(
+                    model='gemini-2.5-flash',
+                    contents=prompt,
+                    config={"temperature": request.temperature}
+                )
+
+                reply_text = response.text
+                requires_human = False
+
+                if "[ESCALATE]" in reply_text:
+                    requires_human = True
+                    reply_text = "Unrecognized issue detected. Halting automation. Connecting you to a live human operator..."
+
+                return ChatResponse(
+                    response=reply_text,
+                    context_used=context_texts,
+                    requires_human=requires_human
+                )
+
+            except Exception as gemini_err:
+                print(f"Gemini API error, falling back to built-in engine: {gemini_err}")
+                # Fall through to fallback mode below
+
+        # -------------------------------------------------------------------
+        # FALLBACK MODE: No Gemini or Gemini failed
+        # -------------------------------------------------------------------
+        context_texts = search_context_sql(
+            db, user_query, organization_id, request.chatbot_id
         )
-
-        reply_text = response.text
-        requires_human = False
-
-        if "[ESCALATE]" in reply_text:
-            requires_human = True
-            reply_text = "Unrecognized issue detected. Halting automation. Connecting you to a live human operator..."
+        reply_text, requires_human = generate_fallback_response(
+            user_query, context_texts, request.system_prompt, request.enable_escalation
+        )
 
         return ChatResponse(
             response=reply_text,
             context_used=context_texts,
-            requires_human=requires_human
+            requires_human=requires_human,
         )
+
     except Exception as e:
         print(f"Error in chat endpoint: {e}")
         return ChatResponse(
-            response=f"Error processing chat: {e}",
+            response="I encountered an error processing your message. Please try again in a moment.",
             context_used=[]
         )

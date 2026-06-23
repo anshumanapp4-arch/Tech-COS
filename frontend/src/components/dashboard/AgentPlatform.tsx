@@ -42,23 +42,31 @@ export default function AgentPlatform() {
   const fetchAgents = async () => {
     try {
       const res = await authFetch("/api/chatbots/");
+      if (!res.ok) {
+        console.warn("Failed to fetch agents:", res.status);
+        return;
+      }
       const data = await res.json();
-      setAgents(data);
+      setAgents(Array.isArray(data) ? data : []);
     } catch (e) {
-      console.error(e);
+      console.error("Cannot reach backend for agents:", e);
     }
   };
 
   const fetchFiles = async () => {
     try {
       const res = await authFetch("/api/upload/files");
+      if (!res.ok) {
+        console.warn("Failed to fetch files:", res.status);
+        return;
+      }
       const data = await res.json();
       setAvailableFiles(data.files || []);
       if (data.files && data.files.length > 0) {
         setFileId(data.files[0].file_id);
       }
     } catch (e) {
-      console.error(e);
+      console.error("Cannot reach backend for files:", e);
     }
   };
 
@@ -67,9 +75,22 @@ export default function AgentPlatform() {
       const res = await authFetch("/api/chatbots/", {
         method: "POST",
         body: JSON.stringify({
-          name, description, department, tags, file_id: fileId, system_prompt: systemPrompt, temperature, enable_escalation: enableEscalation
+          name, description, department, tags, file_id: fileId || "default", system_prompt: systemPrompt, temperature, enable_escalation: enableEscalation
         })
       });
+
+      if (!res.ok) {
+        let detail = "Failed to create agent.";
+        try {
+          const errData = await res.json();
+          detail = errData.detail || detail;
+        } catch {
+          detail = `Server error (${res.status})`;
+        }
+        alert(`❌ ${detail}`);
+        return;
+      }
+
       const newAgent = await res.json();
       setAgents([...agents, newAgent]);
       setSelectedAgent(newAgent);
@@ -80,8 +101,8 @@ export default function AgentPlatform() {
       
       setView("integration");
     } catch (e) {
-      console.error(e);
-      alert("Failed to create agent");
+      console.error("Create agent error:", e);
+      alert("❌ Cannot connect to backend. Is the server running?");
     }
   };
 
@@ -171,7 +192,7 @@ export default function AgentPlatform() {
 
                     <div className="pt-4 border-t border-white/5 flex justify-between items-center mt-auto">
                       <div className="text-[11px] text-slate-500 font-mono">
-                        ID: {agent.bot_id.split('_')[1].toUpperCase()}
+                        ID: {(agent.bot_id.includes('_') ? agent.bot_id.split('_')[1] : agent.bot_id.slice(-8)).toUpperCase()}
                       </div>
                       <div className="text-cyan-400 text-sm font-semibold flex items-center gap-1 group-hover:gap-2 transition-all">
                         Connect <ArrowLeft className="w-4 h-4 rotate-180" />

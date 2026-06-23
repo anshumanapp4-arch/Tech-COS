@@ -4,7 +4,7 @@ from .api import upload, chat, agent, chatbot_manager, auth, billing
 from .database import init_db
 
 app = FastAPI(
-    title="AuraOS — AI Business Automation Platform",
+    title="AuraOS - AI Business Automation Platform",
     description="Multi-tenant B2B SaaS for AI chatbot deployment, media ingestion, and web agent orchestration.",
     version="2.0.0",
 )
@@ -41,7 +41,30 @@ app.include_router(chatbot_manager.router, prefix="/api/chatbots", tags=["Chatbo
 def on_startup():
     """Initialize the database tables on application startup."""
     init_db()
-    print("SUCCESS: AuraOS v2.0 - Database initialized. All systems online.")
+
+    # Service health report
+    print("\n" + "=" * 60)
+    print("  AuraOS v2.0 - Service Health Report")
+    print("=" * 60)
+
+    gemini_key = os.getenv("GEMINI_API_KEY")
+    sarvam_key = os.getenv("SARVAM_API_KEY")
+    pinecone_key = os.getenv("PINECONE_API_KEY")
+
+    print(f"  Database     : [OK] Initialized")
+    print(f"  Gemini AI    : {'[OK] Configured' if gemini_key else '[WARN] Missing GEMINI_API_KEY (chat/embed fallback active)'}")
+    print(f"  Sarvam STT   : {'[OK] Configured' if sarvam_key else '[WARN] Missing SARVAM_API_KEY (transcription fallback active)'}")
+    print(f"  Pinecone     : {'[OK] Configured' if pinecone_key else '[WARN] Missing PINECONE_API_KEY (SQL search fallback active)'}")
+
+    try:
+        from playwright.async_api import async_playwright
+        print(f"  Playwright   : [OK] Available")
+    except ImportError:
+        print(f"  Playwright   : [WARN] Not installed (agent simulation mode active)")
+
+    print("=" * 60)
+    print("  All systems online. Platform ready to serve requests.")
+    print("=" * 60 + "\n")
 
 
 @app.get("/")

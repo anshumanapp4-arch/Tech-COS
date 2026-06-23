@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
-import { MessageSquare, X, Send, Bot, User, Sparkles, AlertCircle } from "lucide-react";
+import { MessageSquare, X, Send, Bot, User, Sparkles, AlertCircle, WifiOff } from "lucide-react";
 import { authFetch } from "@/lib/auth";
 
 export default function ChatWidget({ theme = "glass", primaryColor = "#10b981" }) {
@@ -12,6 +12,7 @@ export default function ChatWidget({ theme = "glass", primaryColor = "#10b981" }
   const [input, setInput] = useState("");
   const [isEscalated, setIsEscalated] = useState(false);
   const [isTyping, setIsTyping] = useState(false);
+  const [isOffline, setIsOffline] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const [chatbotId, setChatbotId] = useState("default");
@@ -20,8 +21,12 @@ export default function ChatWidget({ theme = "glass", primaryColor = "#10b981" }
     const loadConfig = () => {
       const configStr = localStorage.getItem("chatbot_config");
       if (configStr) {
-        const config = JSON.parse(configStr);
-        setChatbotId(config.selectedFileId || "default");
+        try {
+          const config = JSON.parse(configStr);
+          setChatbotId(config.selectedFileId || "default");
+        } catch {
+          // Invalid JSON in localStorage
+        }
       }
     };
     loadConfig();
@@ -51,30 +56,71 @@ export default function ChatWidget({ theme = "glass", primaryColor = "#10b981" }
     setMessages(newMessages);
     setInput("");
     setIsTyping(true);
+    setIsOffline(false);
     
     try {
       const configStr = localStorage.getItem("chatbot_config");
-      const config = configStr ? JSON.parse(configStr) : {};
+      let config: Record<string, unknown> = {};
+      try {
+        config = configStr ? JSON.parse(configStr) : {};
+      } catch {
+        config = {};
+      }
       
       const res = await authFetch("/api/chat/", {
         method: "POST",
         body: JSON.stringify({
-          messages: newMessages,
+          messages: newMessages.map(m => ({ role: m.role, content: m.content })),
           chatbot_id: chatbotId,
-          temperature: config.temperature ?? 0.7,
-          system_prompt: config.systemPrompt ?? "You are AuraOS Assistant. Use the provided context to answer.",
-          enable_escalation: config.enableEscalation ?? false
+          temperature: (config.temperature as number) ?? 0.7,
+          system_prompt: (config.systemPrompt as string) ?? "You are AuraOS Assistant. Use the provided context to answer.",
+          enable_escalation: (config.enableEscalation as boolean) ?? false
         })
       });
-      const data = await res.json();
+
+      if (!res.ok) {
+        // Handle non-200 responses
+        let errorMessage = "Sorry, I encountered an error. Please try again.";
+        try {
+          const errData = await res.json();
+          if (errData.detail) {
+            errorMessage = typeof errData.detail === "string" 
+              ? errData.detail 
+              : "Authentication required. Please log in.";
+          }
+        } catch {
+          errorMessage = `Server error (${res.status}). Please check that the backend is running.`;
+        }
+        setMessages(prev => [...prev, { role: "assistant", content: errorMessage }]);
+        return;
+      }
+
+      let data: { response?: string; requires_human?: boolean };
+      try {
+        data = await res.json();
+      } catch {
+        setMessages(prev => [...prev, { 
+          role: "assistant", 
+          content: "Received an invalid response from the server. Please try again." 
+        }]);
+        return;
+      }
       
       if (data.requires_human) {
         setIsEscalated(true);
       }
       
-      setMessages(prev => [...prev, { role: "assistant", content: data.response || "Error generating response." }]);
+      setMessages(prev => [...prev, { 
+        role: "assistant", 
+        content: data.response || "I received your message but couldn't generate a response. Please try again." 
+      }]);
     } catch (err) {
-      setMessages(prev => [...prev, { role: "assistant", content: "Sorry, I am offline right now." }]);
+      console.error("Chat error:", err);
+      setIsOffline(true);
+      setMessages(prev => [...prev, { 
+        role: "assistant", 
+        content: "⚠️ Unable to reach the AI service. Please check that the backend server is running on http://localhost:8000 and try again." 
+      }]);
     } finally {
       setIsTyping(false);
     }
@@ -94,22 +140,26 @@ export default function ChatWidget({ theme = "glass", primaryColor = "#10b981" }
           {/* Header */}
           <div 
             className="p-5 flex justify-between items-center text-white relative overflow-hidden shrink-0"
-            style={{ backgroundColor: isEscalated ? "#f97316" : primaryColor }}
+            style={{ backgroundColor: isEscalated ? "#f97316" : isOffline ? "#ef4444" : primaryColor }}
           >
             <div className="absolute inset-0 bg-gradient-to-br from-white/20 to-transparent pointer-events-none" />
             <div className="flex items-center gap-3 relative z-10">
               <div className="relative">
                 <div className="w-10 h-10 bg-white/20 rounded-full flex items-center justify-center backdrop-blur-md border border-white/30">
-                  {isEscalated ? <AlertCircle className="w-5 h-5 text-white" /> : <Bot className="w-5 h-5 text-white" />}
+                  {isEscalated ? <AlertCircle className="w-5 h-5 text-white" /> : 
+                   isOffline ? <WifiOff className="w-5 h-5 text-white" /> :
+                   <Bot className="w-5 h-5 text-white" />}
                 </div>
-                <div className="absolute bottom-0 right-0 w-3 h-3 bg-emerald-400 border-2 border-transparent rounded-full shadow-[0_0_10px_rgba(52,211,153,0.8)]" />
+                <div className={`absolute bottom-0 right-0 w-3 h-3 border-2 border-transparent rounded-full shadow-[0_0_10px_rgba(52,211,153,0.8)] ${
+                  isOffline ? "bg-red-400" : "bg-emerald-400"
+                }`} />
               </div>
               <div>
                 <div className="font-semibold text-base leading-tight drop-shadow-sm">
-                  {isEscalated ? "Live Support" : "AI Assistant"}
+                  {isEscalated ? "Live Support" : isOffline ? "Offline" : "AI Assistant"}
                 </div>
                 <div className="text-xs text-white/80 font-medium tracking-wide">
-                  {isEscalated ? "Connecting..." : chatbotId === "default" ? "Global Knowledge" : "Specialized Memory"}
+                  {isEscalated ? "Connecting..." : isOffline ? "Backend unreachable" : chatbotId === "default" ? "Global Knowledge" : "Specialized Memory"}
                 </div>
               </div>
             </div>
@@ -138,7 +188,7 @@ export default function ChatWidget({ theme = "glass", primaryColor = "#10b981" }
                     {m.role === "user" ? "You" : isEscalated ? "Operator" : "Aura"}
                   </div>
                   <div 
-                    className={`rounded-2xl px-4 py-3 shadow-sm text-[14px] leading-relaxed ${
+                    className={`rounded-2xl px-4 py-3 shadow-sm text-[14px] leading-relaxed whitespace-pre-wrap ${
                       m.role === "user" 
                         ? "text-white rounded-tr-sm" 
                         : isDark ? "bg-white/10 backdrop-blur-md border border-white/5 rounded-tl-sm" : "bg-white border border-slate-100 rounded-tl-sm shadow-md"
@@ -204,12 +254,12 @@ export default function ChatWidget({ theme = "glass", primaryColor = "#10b981" }
                   type="text" 
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
-                  placeholder="Type your message..." 
+                  placeholder={isOffline ? "Backend offline..." : "Type your message..."} 
                   className="flex-1 bg-transparent border-none focus:outline-none focus:ring-0 text-[14px]"
                 />
                 <button 
                   type="submit" 
-                  disabled={!input.trim()}
+                  disabled={!input.trim() || isTyping}
                   className="p-2 rounded-full disabled:opacity-30 disabled:scale-100 hover:scale-110 transition-all text-white shadow-md"
                   style={{ backgroundColor: primaryColor }}
                 >

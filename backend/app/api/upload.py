@@ -1,6 +1,7 @@
 """
-Media upload & transcription API — multi-tenant edition.
-Stores document metadata in SQL and tags ChromaDB embeddings with org_id.
+Media upload & transcription API — multi-tenant edition with graceful fallback.
+When Sarvam + Gemini + Pinecone available: full transcription + embedding pipeline.
+When unavailable: stores files and provides fallback transcription.
 """
 
 import os
@@ -8,15 +9,12 @@ import uuid
 import glob
 import json
 import subprocess
-import requests
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, File, UploadFile, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel
 from typing import Optional
 from dotenv import load_dotenv
-from google import genai
-from pinecone import Pinecone
 from sqlalchemy.orm import Session
 
 from ..models import Document, Subscription, User, generate_uuid
@@ -28,26 +26,43 @@ router = APIRouter()
 UPLOAD_DIR = "uploads"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
+# ---------------------------------------------------------------------------
+# External service initialization (graceful)
+# ---------------------------------------------------------------------------
+
 SARVAM_API_KEY = os.getenv("SARVAM_API_KEY")
+if SARVAM_API_KEY:
+    print("[OK] Upload: Sarvam STT API key configured.")
+else:
+    print("[INFO] Upload: No SARVAM_API_KEY -- transcription will use fallback mode.")
+
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 gemini_client = None
 if GEMINI_API_KEY:
-    gemini_client = genai.Client(api_key=GEMINI_API_KEY)
+    try:
+        from google import genai
+        gemini_client = genai.Client(api_key=GEMINI_API_KEY)
+        print("[OK] Upload: Gemini embedding client initialized.")
+    except Exception as e:
+        print(f"[WARN] Upload: Gemini client init failed: {e}")
 
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
 PINECONE_INDEX_NAME = os.getenv("PINECONE_INDEX_NAME", "auraos")
+pinecone_index = None
 
 if PINECONE_API_KEY:
     try:
+        from pinecone import Pinecone
         pc = Pinecone(api_key=PINECONE_API_KEY)
         pinecone_index = pc.Index(PINECONE_INDEX_NAME)
+        print(f"[OK] Upload: Pinecone index '{PINECONE_INDEX_NAME}' connected.")
     except Exception as e:
-        print(f"WARNING: Could not connect to Pinecone index '{PINECONE_INDEX_NAME}': {e}")
-        print("Please ensure you have created a Pinecone index with 768 dimensions (for gemini-embedding-2) and cosine metric.")
-        pinecone_index = None
-else:
-    pinecone_index = None
+        print(f"[WARN] Upload: Pinecone connection failed: {e}")
 
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
 
 class UploadResponse(BaseModel):
     file_id: str
@@ -73,72 +88,136 @@ def chunk_text(text, chunk_size=500):
     return chunks
 
 
-import imageio_ffmpeg
+# ---------------------------------------------------------------------------
+# Transcription: Real pipeline (Sarvam API)
+# ---------------------------------------------------------------------------
+
+def transcribe_with_sarvam(file_path: str, file_id: str) -> str:
+    """Transcribe audio using Sarvam API with chunked processing."""
+    import requests
+    import imageio_ffmpeg
+
+    ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
+    print(f"[{file_id}] Slicing media into 30s chunks using ffmpeg...")
+
+    chunk_pattern = f"{file_path}_chunk_%03d.mp3"
+    subprocess.run([
+        ffmpeg_exe, "-y", "-i", file_path,
+        "-f", "segment", "-segment_time", "30",
+        "-c:a", "libmp3lame", "-q:a", "0", "-map", "a",
+        chunk_pattern
+    ], check=True)
+
+    full_transcription = ""
+    url = "https://api.sarvam.ai/speech-to-text"
+    headers = {"api-subscription-key": SARVAM_API_KEY}
+
+    chunk_files = sorted(glob.glob(f"{file_path}_chunk_*.mp3"))
+
+    for idx, chunk_path in enumerate(chunk_files):
+        print(f"[{file_id}] Transcribing chunk {idx+1}/{len(chunk_files)}...")
+        files = {"file": ("audio.mp3", open(chunk_path, "rb"), "audio/mpeg")}
+        data = {"model": "saaras:v3", "mode": "transcribe"}
+
+        response = requests.post(url, headers=headers, files=files, data=data)
+
+        if response.status_code == 200:
+            transcript = response.json().get("transcript", "")
+            full_transcription += transcript + " "
+        else:
+            raise Exception(f"Sarvam API Error on chunk: {response.text}")
+
+    # Clean up chunk files
+    for chunk_path in chunk_files:
+        try:
+            os.remove(chunk_path)
+        except Exception:
+            pass
+
+    return full_transcription.strip()
 
 
-def process_audio(file_path: str, file_id: str, original_filename: str, organization_id: str):
-    """Process audio in the background: transcribe, chunk, embed, and store in DB."""
-    from ..database import SessionLocal
+# ---------------------------------------------------------------------------
+# Transcription: Fallback mode (no Sarvam API)
+# ---------------------------------------------------------------------------
 
-    db = SessionLocal()
-    print(f"Starting processing for {file_id} (org: {organization_id})")
+def transcribe_fallback(file_path: str, file_id: str, original_filename: str) -> str:
+    """
+    Fallback transcription when Sarvam API is unavailable.
+    For text files: reads content directly.
+    For audio/video: creates a descriptive placeholder.
+    """
+    ext = os.path.splitext(original_filename)[1].lower()
+    file_size_mb = os.path.getsize(file_path) / (1024 * 1024)
 
+    # Text files — read content directly
+    if ext in [".txt", ".text"]:
+        try:
+            with open(file_path, "r", encoding="utf-8", errors="replace") as f:
+                content = f.read()
+            return content.strip() if content.strip() else f"Empty text file: {original_filename}"
+        except Exception:
+            pass
+
+    # CSV files — read as text
+    if ext in [".csv"]:
+        try:
+            with open(file_path, "r", encoding="utf-8", errors="replace") as f:
+                content = f.read()
+            return f"CSV Data from {original_filename}:\n{content[:10000]}"
+        except Exception:
+            pass
+
+    # Audio/Video files — provide metadata-based description
+    duration_info = ""
     try:
+        import imageio_ffmpeg
         ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
+        result = subprocess.run(
+            [ffmpeg_exe, "-i", file_path],
+            capture_output=True, text=True, timeout=10
+        )
+        # Duration is in stderr for ffmpeg
+        stderr = result.stderr
+        import re
+        duration_match = re.search(r'Duration:\s*(\d+:\d+:\d+\.\d+)', stderr)
+        if duration_match:
+            duration_info = f"Duration: {duration_match.group(1)}"
+    except Exception:
+        pass
 
-        print(f"[{file_id}] Slicing media into 30s chunks using ffmpeg...")
+    return (
+        f"Media file uploaded: {original_filename}\n"
+        f"File size: {file_size_mb:.2f} MB\n"
+        f"File type: {ext or 'unknown'}\n"
+        f"{duration_info}\n\n"
+        f"This file has been stored successfully. To enable full AI-powered transcription, "
+        f"configure the SARVAM_API_KEY in your backend .env file.\n\n"
+        f"The AuraOS chat system can still reference this document by filename and metadata."
+    )
 
-        chunk_pattern = f"{file_path}_chunk_%03d.mp3"
-        subprocess.run([
-            ffmpeg_exe, "-y", "-i", file_path,
-            "-f", "segment", "-segment_time", "30",
-            "-c:a", "libmp3lame", "-q:a", "0", "-map", "a",
-            chunk_pattern
-        ], check=True)
 
-        full_transcription = ""
-        url = "https://api.sarvam.ai/speech-to-text"
-        headers = {"api-subscription-key": SARVAM_API_KEY}
+# ---------------------------------------------------------------------------
+# Embedding pipeline
+# ---------------------------------------------------------------------------
 
-        chunk_files = sorted(glob.glob(f"{file_path}_chunk_*.mp3"))
+def embed_and_store(transcription: str, file_id: str, organization_id: str):
+    """Chunk, embed with Gemini, and store in Pinecone. Gracefully skips if unavailable."""
+    if not gemini_client:
+        print(f"[{file_id}] Skipping embedding: Gemini client not available.")
+        return
 
-        for idx, chunk_path in enumerate(chunk_files):
-            print(f"[{file_id}] Transcribing chunk {idx+1}/{len(chunk_files)}...")
-            files = {"file": ("audio.mp3", open(chunk_path, "rb"), "audio/mpeg")}
-            data = {"model": "saaras:v3", "mode": "transcribe"}
+    if not pinecone_index:
+        print(f"[{file_id}] Skipping vector storage: Pinecone not available.")
+        return
 
-            response = requests.post(url, headers=headers, files=files, data=data)
+    text_chunks = chunk_text(transcription)
+    vectors_to_upsert = []
 
-            if response.status_code == 200:
-                transcript = response.json().get("transcript", "")
-                full_transcription += transcript + " "
-            else:
-                raise Exception(f"Sarvam API Error on chunk: {response.text}")
-
-        transcription = full_transcription.strip()
-        print(f"Full Transcription successful for {file_id}: {transcription[:100]}...")
-
-        # Also save JSON for legacy compatibility
-        with open(f"uploads/{file_id}.json", "w") as f:
-            json.dump({
-                "transcription": transcription,
-                "filename": original_filename,
-                "file_id": file_id
-            }, f)
-
-        # Update document record in SQL
-        doc = db.query(Document).filter(Document.file_id == file_id).first()
-        if doc:
-            doc.transcription = transcription
-            doc.status = "completed"
-            db.commit()
-
-        # Chunk and Embed with Gemini — tag with organization_id for multi-tenant isolation
-        text_chunks = chunk_text(transcription)
-        vectors_to_upsert = []
-        for i, chunk in enumerate(text_chunks):
-            if not chunk.strip():
-                continue
+    for i, chunk in enumerate(text_chunks):
+        if not chunk.strip():
+            continue
+        try:
             embed_result = gemini_client.models.embed_content(
                 model="gemini-embedding-2",
                 contents=chunk
@@ -154,15 +233,57 @@ def process_audio(file_path: str, file_id: str, original_filename: str, organiza
                     "organization_id": organization_id,
                 }
             })
-            
-        if vectors_to_upsert and pinecone_index:
+        except Exception as embed_err:
+            print(f"[{file_id}] Embedding error on chunk {i}: {embed_err}")
+
+    if vectors_to_upsert:
+        try:
             pinecone_index.upsert(vectors=vectors_to_upsert)
-            
-        print(f"[{file_id}] Successfully embedded into Pinecone with org isolation.")
+            print(f"[{file_id}] Successfully embedded {len(vectors_to_upsert)} chunks into Pinecone.")
+        except Exception as upsert_err:
+            print(f"[{file_id}] Pinecone upsert error: {upsert_err}")
+
+
+# ---------------------------------------------------------------------------
+# Background processing task
+# ---------------------------------------------------------------------------
+
+def process_audio(file_path: str, file_id: str, original_filename: str, organization_id: str):
+    """Process uploaded media in the background: transcribe, chunk, embed, store."""
+    from ..database import SessionLocal
+
+    db = SessionLocal()
+    print(f"Starting processing for {file_id} (org: {organization_id})")
+
+    try:
+        # Step 1: Transcribe
+        if SARVAM_API_KEY:
+            transcription = transcribe_with_sarvam(file_path, file_id)
+        else:
+            transcription = transcribe_fallback(file_path, file_id, original_filename)
+
+        print(f"Transcription successful for {file_id}: {transcription[:100]}...")
+
+        # Save JSON for legacy compatibility
+        with open(f"uploads/{file_id}.json", "w") as f:
+            json.dump({
+                "transcription": transcription,
+                "filename": original_filename,
+                "file_id": file_id
+            }, f)
+
+        # Update document record in SQL
+        doc = db.query(Document).filter(Document.file_id == file_id).first()
+        if doc:
+            doc.transcription = transcription
+            doc.status = "completed"
+            db.commit()
+
+        # Step 2: Embed and store (gracefully skips if services unavailable)
+        embed_and_store(transcription, file_id, organization_id)
 
     except Exception as e:
         print(f"[{file_id}] Processing error: {e}")
-        # Update document status to error
         doc = db.query(Document).filter(Document.file_id == file_id).first()
         if doc:
             doc.status = "error"
@@ -174,6 +295,10 @@ def process_audio(file_path: str, file_id: str, original_filename: str, organiza
     finally:
         db.close()
 
+
+# ---------------------------------------------------------------------------
+# Endpoints
+# ---------------------------------------------------------------------------
 
 @router.post("/", response_model=UploadResponse)
 async def upload_audio(
@@ -219,10 +344,11 @@ async def upload_audio(
         process_audio, file_path, file_id, file.filename, user.organization_id
     )
 
+    mode = "full" if SARVAM_API_KEY else "local"
     return UploadResponse(
         file_id=file_id,
         filename=file.filename,
-        message="File uploaded successfully and is being processed in the background."
+        message=f"File uploaded successfully. Processing in background ({mode} mode)."
     )
 
 
@@ -240,7 +366,7 @@ def get_transcription(
 
     if doc:
         if doc.status == "error":
-            return {"error": doc.error_message}
+            return {"error": doc.error_message or "Processing failed."}
         if doc.status == "completed" and doc.transcription:
             return {
                 "transcription": doc.transcription,
