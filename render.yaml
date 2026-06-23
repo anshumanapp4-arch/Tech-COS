@@ -14,9 +14,9 @@ services:
     region: oregon
     rootDir: backend
     envVars:
-      # Database Connection URL (Set manually in Render Dashboard if using external DB)
+      # Database Connection URL
       - key: DATABASE_URL
-        sync: false
+        value: postgresql://tech_cos_user:g5z58aP21cDyiGmcSsRY7CqjgOodEV4m@dpg-d8rcnhsvikkc738efuhg-a/tech_cos
 
       # Automatically injected frontend URL for CORS middleware
       - key: FRONTEND_URL
