@@ -25,13 +25,15 @@ services:
           name: auraos-frontend-anshuman
           property: host
 
-      # Secrets to be filled in manually via the Render Dashboard on first sync
+      # Secrets automatically configured by Blueprint
       - key: PINECONE_API_KEY
-        sync: false
+        value: pcsk_68Vc2G_UtnxcUPMeMSw4zRSU4UL1mwxFGKD9yhvSpVJJwx9NT9Q6ariU7LsDQyxpoMgKMZ
       - key: GEMINI_API_KEY
-        sync: false
+        value: base64:QVEuQWI4Uk42SkIwMlpsRmhaeFhVcTlqeGtaTU1NSUJuVzBaYWpjRGxJeE1ZR2s0TmZBZw==
       - key: SARVAM_API_KEY
-        sync: false
+        value: sk_arxk1hkr_d46SRL0ufOjVQrgqfzEHERWE
+      - key: PINECONE_INDEX_NAME
+        value: auraos
 
       # Automatically generated secure token secret
       - key: JWT_SECRET
